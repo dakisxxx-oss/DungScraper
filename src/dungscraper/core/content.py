@@ -353,6 +353,66 @@ def merge_structures(primary: str, others: list[str]) -> str:
     return primary.rstrip() + "\n\n" + "\n\n".join(extras)
 
 
+_OVERLAY_PHRASES = (
+    "join stack overflow",
+    "sign up with google",
+    "sign up with github",
+    "cnn values your feedback",
+    "how relevant is this ad to you",
+    "accept all cookies",
+    "we value your privacy",
+    "subscribe to our newsletter",
+    "set up your homepage",
+    "select a few topics",
+)
+
+
+def _noisy_heading(title: str) -> bool:
+    lowered = title.lower()
+    return any(
+        phrase in lowered
+        for phrase in (
+            "join stack overflow",
+            "sign up",
+            "log in",
+            "feedback",
+            "cookie",
+            "subscribe",
+            "advertisement",
+            "privacy",
+            "homepage",
+            "topics you're interested",
+            "set up your",
+        )
+    )
+
+
+def _prefix_is_noise(prefix: str) -> bool:
+    if any(phrase in prefix for phrase in _OVERLAY_PHRASES):
+        return True
+    hits = sum(1 for phrase in ("password", "sign up", "log in", "email") if phrase in prefix)
+    return hits >= 2
+
+
+def strip_overlays(markdown: str) -> str:
+    """Drop a leading signup, cookie, or ad block when a real article follows it."""
+    text = markdown or ""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not re.match(r"^#{1,3} ", line):
+            continue
+        title = line.lstrip("#").strip()
+        if _noisy_heading(title) or len(title) < 12:
+            continue
+        prefix = "\n".join(lines[:index]).lower()
+        if prefix.strip() and _prefix_is_noise(prefix):
+            cleaned = "\n".join(lines[index:]).strip()
+            if len(cleaned.split()) >= 20:
+                return cleaned
+        break
+    return text
+
+
 def _ensure_title(markdown: str, title: str | None) -> str:
     if not title:
         return markdown
@@ -415,6 +475,9 @@ def html_to_content(
     else:
         markdown = html_to_markdown(cleaned, url)
 
-    markdown = _ensure_title(cleanup_markdown(markdown), metadata.title)
+    markdown = cleanup_markdown(markdown)
+    if only_main_content:
+        markdown = strip_overlays(markdown)
+    markdown = _ensure_title(markdown, metadata.title)
     links = extract_links(chosen_html if only_main_content else cleaned, url)
     return Extracted(markdown=markdown, html=chosen_html, links=links, metadata=metadata)

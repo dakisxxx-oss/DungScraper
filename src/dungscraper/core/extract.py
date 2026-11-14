@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import jsonschema
+from bs4 import BeautifulSoup
 
 from dungscraper.config import Settings
 from dungscraper.core.scrape import scrape_url
@@ -139,6 +140,96 @@ async def _extract_one(content: str, request: ExtractRequest, settings: Settings
     return data
 
 
+def _use_selectors(request: ExtractRequest, settings: Settings) -> bool:
+    if request.mode == "llm":
+        return False
+    if request.mode == "selector":
+        return True
+    return bool(request.selectors) and not llm_configured(settings)
+
+
+def select_fields(document: str, selectors: dict[str, str]) -> dict:
+    """Read fields with CSS, or with an `xpath:` prefix."""
+    from lxml import html as lhtml
+
+    soup = BeautifulSoup(document, "lxml")
+    tree = None
+    try:
+        tree = lhtml.fromstring(document)
+    except Exception:
+        tree = None
+    found: dict = {}
+    for name, expr in selectors.items():
+        if expr.startswith("xpath:"):
+            if tree is None:
+                found[name] = None
+                continue
+            nodes = tree.xpath(expr[6:])
+            texts = []
+            for node in nodes:
+                if isinstance(node, str):
+                    texts.append(" ".join(node.split()))
+                else:
+                    texts.append(" ".join(node.text_content().split()))
+            found[name] = texts[0] if len(texts) == 1 else texts
+            continue
+        css = expr[4:] if expr.startswith("css:") else expr
+        nodes = soup.select(css)
+        texts = [" ".join(node.get_text(" ", strip=True).split()) for node in nodes]
+        found[name] = texts[0] if len(texts) == 1 else texts
+    return found
+
+
+def heuristic_fields(text: str) -> dict:
+    headings = re.findall(r"^#{1,3} +(.+)$", text or "", flags=re.MULTILINE)
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text or "") if len(part.split()) > 8]
+    return {
+        "title": headings[0] if headings else None,
+        "headings": headings[:12],
+        "summary": paragraphs[0] if paragraphs else None,
+    }
+
+
+async def _extract_without_llm(
+    request: ExtractRequest,
+    *,
+    settings: Settings,
+    client: httpx.AsyncClient | None,
+    cache,
+    browser,
+) -> ExtractData:
+    results: list[ExtractItem] = []
+    documents: list[tuple[str | None, str]] = []
+    if request.urls:
+        own = client is None
+        http = client or httpx.AsyncClient(timeout=settings.request_timeout_seconds)
+        try:
+            for url in request.urls:
+                options = request.scrape_options.model_dump()
+                options["formats"] = list(dict.fromkeys([*options.get("formats", []), "html", "markdown"]))
+                scraped = await scrape_url(
+                    ScrapeRequest(url=url, **options),
+                    settings=settings,
+                    client=http,
+                    cache=cache,
+                    browser=browser,
+                )
+                source = scraped.html or scraped.markdown or ""
+                documents.append((url, source))
+        finally:
+            if own:
+                await http.aclose()
+    elif request.content:
+        documents.append((None, request.content))
+    for url, document in documents:
+        if request.selectors:
+            data = select_fields(document, request.selectors)
+        else:
+            data = heuristic_fields(document)
+        results.append(ExtractItem(url=url, data=data))
+    return ExtractData(results=results, model="selector")
+
+
 async def extract_structured(
     request: ExtractRequest,
     *,
@@ -147,6 +238,10 @@ async def extract_structured(
     cache=None,
     browser=None,
 ) -> ExtractData:
+    if _use_selectors(request, settings):
+        return await _extract_without_llm(
+            request, settings=settings, client=client, cache=cache, browser=browser
+        )
     _require_llm(settings)
     model = request.model or settings.llm_model
     results: list[ExtractItem] = []

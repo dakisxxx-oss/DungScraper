@@ -46,6 +46,8 @@ Health check: `GET /health` (no API key required).
 | `POST /v1/search` | Search, then scrape the hits. Falls through providers when one rate-limits. |
 | `POST /v1/extract` | JSON from a page or from text, checked against a JSON Schema. |
 | `POST /v1/chunk` | Heading-aware chunks for retrieval. |
+| `POST /v1/diff` | Unified diff of markdown against a baseline or the previous snapshot. |
+| `POST /v1/crawl/{id}/resume` | Continue a crawl from the frontier saved with each page. |
 
 Input accepts snake_case and the camelCase names agents already send (`onlyMainContent`, `maxDepth`, `scrapeOptions`, `waitFor`). `waitFor` is milliseconds. A CSS selector is `wait_for`.
 
@@ -74,6 +76,22 @@ curl -s http://127.0.0.1:8741/v1/scrape \
 `onlyMainContent` defaults to true: nav, cookie banners, and obvious ads are removed, and the better of Trafilatura, Readability, and the `<article>` element is kept. Tables and code blocks dropped by one extractor are copied back from another. Set it to false for the full page. Links and image URLs are absolute.
 
 `DUNGSCRAPER_PROXY_URLS` is an optional comma-separated list. Requests rotate through it. A per-request `proxy` overrides the list.
+
+### Reddit and other site APIs
+
+reddit.com HTML is not fetched. Reddit's robots.txt disallows it, and that default stays on. A Reddit post, comment thread, subreddit, or search uses the official OAuth API when you configure a script app from <https://www.reddit.com/prefs/apps>:
+
+```bash
+export DUNGSCRAPER_REDDIT_CLIENT_ID=your_id
+export DUNGSCRAPER_REDDIT_CLIENT_SECRET=your_secret
+export DUNGSCRAPER_REDDIT_USERNAME=your_username
+export DUNGSCRAPER_REDDIT_PASSWORD=your_password
+export DUNGSCRAPER_REDDIT_USER_AGENT='dungscraper/0.1 by yourname'
+```
+
+Script apps use the password grant, so the username and password are the developer account that owns the app. If those two are omitted, DungScraper tries the client-credentials grant. With nothing set, a Reddit URL returns `reddit_not_configured` and explains these variables. It does not try to dodge the block.
+
+The same adapter hook reads other allowed APIs and falls back to a normal fetch when they fail: Wikipedia's REST HTML, GitHub's REST API (`DUNGSCRAPER_GITHUB_TOKEN` optional), the arXiv Atom API, Hacker News' Firebase API, and YouTube's public caption tracks when a video exposes them. `max_comment_depth` limits Reddit and Hacker News threads.
 
 ```json
 {
@@ -163,7 +181,17 @@ curl -s http://127.0.0.1:8741/v1/extract \
   }'
 ```
 
-The model is asked again once if the JSON does not validate. Pass `urls` (several pages) or `content` (markdown you already have), plus a `prompt`, a `schema`, or both. With no key and the default OpenAI base URL, the API returns `llm_not_configured` and does not invent a result.
+The model is asked again once if the JSON does not validate. Pass `urls` (several pages) or `content` (markdown you already have), plus a `prompt`, a `schema`, or both. With no key and the default OpenAI base URL, a prompt or schema returns `llm_not_configured` and does not invent a result.
+
+`mode=selector` does not call a model. `selectors` maps a field name to a CSS selector, `css:...`, or `xpath:...`. With no selectors, selector mode returns a heuristic title, headings, and first long paragraph.
+
+```bash
+curl -s http://127.0.0.1:8741/v1/extract \
+  -H 'content-type: application/json' \
+  -d '{"content":"<h1>Ada</h1><p class=\"bio\">Notes</p>","mode":"selector","selectors":{"name":"h1"}}'
+```
+
+`POST /v1/diff` compares `current` markdown to `baseline`, or scrapes `url` and compares it with the last snapshot stored for that URL.
 
 Chunking is local and does not call a model. Tokens are estimated at about four characters each, which is stable and does not download a tokenizer.
 
@@ -272,7 +300,9 @@ Twenty URLs (news, docs, a SPA, e-commerce, Q&A, Reddit, Medium), same rule both
 | Refused because robots.txt disallows the bot | 3 | 3 |
 | Still a challenge page | 3 | 2 |
 
-The page that moved was the Stack Overflow question on `yield`: before, a 4-word "Just a moment" interstitial; after, about 16,000 words that include the answer. The markdown still opens on the signup form, and the HTTP status stays 403. AP News and Medium stay on "Just a moment" after an 8 second wait. Reuters and both Reddit URLs are refused because their robots.txt disallows `DungScraperBot`. Commercial crawlers often ignore that file, which is why they appear to fetch those sites. CNN's markdown, in both runs, opens on a feedback prompt even though the word count is high.
+The page that moved in the second round was the Stack Overflow question on `yield`: a 4-word "Just a moment" interstitial became about 16,000 words that include the answer. AP News and Medium stayed on a challenge page. Reuters and both Reddit URLs were refused because their robots.txt disallows `DungScraperBot`.
+
+The third round, measured again on the same 20 URLs, stayed **15/20**. Wikipedia, GitHub, Hacker News, and arXiv now come from their public APIs (`render_mode` `api`) and are shorter, cleaner documents. Reddit no longer fails as a robots error: with no app credentials it returns `reddit_not_configured` and does not fetch HTML. Reuters is still a robots refusal. AP News and Medium still stop on a security check. A later pass strips a leading Stack Overflow signup or topic picker and CNN's feedback prompt when a real heading follows; that does not change the 15/20 count, because those two pages were already long enough to count.
 
 ## Tests
 
@@ -284,8 +314,8 @@ Unit tests cover extraction, chunking, simhash, robots, sitemaps, SSRF checks, s
 
 ## Known gaps
 
-- Managed challenges still win on some hosts. AP News and Medium returned a "Just a moment" page after the browser waited. There is no captcha vendor and no stealth service beyond hiding the automation flag.
-- Sites that disallow `DungScraperBot` in robots.txt are not fetched. Reuters and Reddit are in that set. Passing `respect_robots: false` is for a site you are allowed to read, not a default.
+- Managed challenges still win on some hosts. A response that is still an interstitial sets `block_reason` to `challenge`. There is no captcha vendor.
+- Sites that disallow `DungScraperBot` in robots.txt are not fetched, except where a separate official API is configured. Reddit HTML is never the fallback. Reuters stays blocked unless its robots.txt allows the bot. `respect_robots: false` is for a site you are allowed to read, not a default.
 - Signup walls and ad prompts can sit in front of real copy. Stack Overflow's answer is in the markdown, under a signup form. CNN's scrape opens on a feedback prompt.
 - Search still depends on a provider. With no Brave, Serper, or SearXNG key, DuckDuckGo is the only option, and it can rate-limit this host.
 - Extract returns `llm_not_configured` until you set an OpenAI-compatible model. It does not guess.

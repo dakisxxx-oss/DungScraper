@@ -376,7 +376,7 @@ class BrowserManager:
                     html = await page.content()
                 shot = None
                 if screenshot:
-                    shot = await page.screenshot(type="jpeg", quality=60, full_page=screenshot_full_page)
+                    shot = await page.screenshot(type="jpeg", quality=74, full_page=screenshot_full_page)
                 warnings = [f"http_status_{status}"] if status >= 400 else []
                 if is_challenge(html, status):
                     warnings.append("challenge_unresolved")

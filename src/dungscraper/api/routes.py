@@ -10,8 +10,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from dungscraper import __version__
 from dungscraper.api.auth import require_api_key
 from dungscraper.core.chunk import chunk_markdown, estimate_tokens
+from dungscraper.core.diff import markdown_diff, remember_snapshot
 from dungscraper.core.extract import extract_structured
-from dungscraper.core.jobs import cancel_crawl, job_view, start_crawl
+from dungscraper.core.jobs import cancel_crawl, job_view, resume_crawl, start_crawl
 from dungscraper.core.map import map_site
 from dungscraper.core.scrape import scrape_url
 from dungscraper.core.search import search_web
@@ -24,6 +25,8 @@ from dungscraper.models import (
     ChunkData,
     ChunkRequest,
     ChunkResponse,
+    DiffRequest,
+    DiffResponse,
     CrawlRequest,
     CrawlResponse,
     ExtractRequest,
@@ -138,6 +141,47 @@ async def crawl_status(job_id: str, request: Request) -> CrawlResponse:
 async def crawl_cancel(job_id: str, request: Request) -> CrawlResponse:
     job = await cancel_crawl(job_id, _services(request))
     return CrawlResponse(success=True, data=job)
+
+
+@router.post(
+    "/v1/crawl/{job_id}/resume",
+    response_model=CrawlResponse,
+    response_model_exclude_none=True,
+    tags=["crawl"],
+    summary="Resume a crawl from its saved frontier",
+)
+async def crawl_resume(job_id: str, request: Request) -> CrawlResponse:
+    job = await resume_crawl(job_id, _services(request))
+    return CrawlResponse(success=True, data=job)
+
+
+@router.post(
+    "/v1/diff",
+    response_model=DiffResponse,
+    response_model_exclude_none=True,
+    tags=["diff"],
+    summary="Diff markdown against a baseline or the last snapshot",
+)
+async def diff_page(body: DiffRequest, request: Request) -> DiffResponse:
+    current = body.current
+    baseline = body.baseline
+    if body.url and current is None:
+        services = _services(request)
+        from dungscraper.core.scrape import scrape_url
+        from dungscraper.models import ScrapeRequest
+
+        scraped = await scrape_url(
+            ScrapeRequest(url=body.url, formats=["markdown"]),
+            settings=services.settings,
+            client=services.client,
+            cache=services.cache,
+            browser=services.browser,
+        )
+        current = scraped.markdown or ""
+        if baseline is None:
+            baseline = remember_snapshot(body.url, current) or ""
+    data = markdown_diff(baseline or "", current or "", url=body.url)
+    return DiffResponse(success=True, data=data)
 
 
 @router.post(

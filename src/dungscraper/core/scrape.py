@@ -10,10 +10,11 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from dungscraper.adapters import adapter_for, fetch_via_adapter
 from dungscraper.config import Settings, get_settings
 from dungscraper.core.cache import Cache, NullCache
 from dungscraper.core.chunk import chunk_markdown
-from dungscraper.core.content import html_to_content, should_escalate
+from dungscraper.core.content import html_to_content, is_challenge, should_escalate
 from dungscraper.core.documents import docx_to_markdown, pdf_to_markdown
 from dungscraper.core.fetch import BrowserManager, RawFetch, http_fetch, make_client, proxy_rotator, sniff_kind
 from dungscraper.core.robots import RobotsGate
@@ -182,6 +183,14 @@ async def scrape_url(
         fail_open=settings.robots_fail_open,
     )
     try:
+        adapted = await _from_adapter(request, settings=settings, client=client)
+        if adapted is not None:
+            adapted.timings_ms = {"total_ms": int((time.perf_counter() - started) * 1000)}
+            adapted = _apply_formats(adapted, request.formats or ["markdown"])
+            _note_block(adapted)
+            if request.cache and settings.cache_enabled:
+                await cache.set(key, adapted.model_dump(mode="json"), settings.cache_ttl_seconds)
+            return adapted
         if respect and not await gate.allowed(target):
             raise DungScraperError(
                 "robots_disallowed",
@@ -277,6 +286,7 @@ async def scrape_url(
             "extract_ms": extract_ms,
         }
         data = _apply_formats(data, request.formats or ["markdown"])
+        _note_block(data)
         if request.cache and settings.cache_enabled and "screenshot" not in request.formats:
             encoded = data.model_dump(mode="json")
             blob = json.dumps(encoded)
@@ -301,3 +311,26 @@ async def scrape_url(
 
 def known_formats() -> set[str]:
     return set(FORMATS)
+
+
+def _note_block(data: ScrapeData) -> None:
+    if data.block_reason:
+        return
+    if "challenge_unresolved" in data.warnings or is_challenge(data.markdown or "", data.status_code or 200):
+        data.block_reason = "challenge"
+
+
+async def _from_adapter(request: ScrapeRequest, *, settings: Settings, client: httpx.AsyncClient) -> ScrapeData | None:
+    adapter = adapter_for(request.url)
+    if adapter is None:
+        return None
+    interactive = bool(request.actions or request.wait_for or "screenshot" in request.formats or request.render == "browser")
+    if interactive and getattr(adapter, "name", "") != "reddit":
+        return None
+    try:
+        return await fetch_via_adapter(request, settings=settings, client=client)
+    except DungScraperError as exc:
+        if str(getattr(adapter, "name", "")) == "reddit" or exc.code.startswith("reddit_"):
+            raise
+        log.info("adapter failed", extra={"data": {"adapter": getattr(adapter, "name", ""), "error": exc.message}})
+        return None

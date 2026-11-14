@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     searxng_url: str = ""
     brave_api_key: str = ""
     serper_api_key: str = ""
+    reddit_client_id: str = ""
+    reddit_client_secret: str = ""
+    reddit_username: str = ""
+    reddit_password: str = ""
+    reddit_user_agent: str = "dungscraper/0.1 (script app)"
+    github_token: str = ""
     log_level: str = "INFO"
     log_json: bool = True
     max_response_bytes: int = 10_000_000
@@ -61,6 +67,10 @@ class Settings(BaseSettings):
         if self.api_key.strip():
             keys.add(self.api_key.strip())
         return keys
+
+    @property
+    def reddit_configured(self) -> bool:
+        return bool(self.reddit_client_id.strip() and self.reddit_client_secret.strip())
 
     def resolved_crawl_mode(self) -> str:
         if self.crawl_mode == "auto":

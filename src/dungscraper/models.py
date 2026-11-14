@@ -90,6 +90,9 @@ class ScrapeOptions(BaseModel):
         validation_alias=AliasChoices("exclude_selectors", "excludeSelectors"),
     )
     chunk: ChunkOptions | None = None
+    max_comment_depth: int = Field(
+        3, ge=0, le=8, validation_alias=AliasChoices("max_comment_depth", "maxCommentDepth")
+    )
 
     @field_validator("formats")
     @classmethod
@@ -148,6 +151,7 @@ class ScrapeData(BaseModel):
     render_mode: str
     timings_ms: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
+    block_reason: str | None = None
 
 
 class ErrorBody(BaseModel):
@@ -349,6 +353,8 @@ class ExtractRequest(BaseModel):
     content: str | None = None
     prompt: str | None = None
     schema_: dict[str, Any] | None = Field(default=None, alias="schema")
+    mode: Literal["auto", "llm", "selector"] = "auto"
+    selectors: dict[str, str] = Field(default_factory=dict)
     model: str | None = None
     max_chars: int = Field(24_000, ge=500, le=200_000, validation_alias=AliasChoices("max_chars", "maxChars"))
     scrape_options: ScrapeOptions = Field(
@@ -376,8 +382,11 @@ class ExtractRequest(BaseModel):
         self.urls = urls
         if not urls and not (self.content and self.content.strip()):
             raise ValueError("Provide url, urls, or content")
-        if not (self.prompt and self.prompt.strip()) and not self.schema_:
-            raise ValueError("Provide a prompt or a JSON schema")
+        has_instruction = bool(self.prompt and self.prompt.strip()) or bool(self.schema_)
+        if self.mode == "selector":
+            return self
+        if not has_instruction and not self.selectors:
+            raise ValueError("Provide a prompt, a JSON schema, or selectors")
         return self
 
 
@@ -421,4 +430,39 @@ class ChunkData(BaseModel):
 class ChunkResponse(BaseModel):
     success: bool = True
     data: ChunkData | None = None
+    error: ErrorBody | None = None
+
+
+class DiffRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    url: str | None = None
+    baseline: str | None = None
+    current: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def check_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _http_url(value)
+
+    @model_validator(mode="after")
+    def has_text(self) -> DiffRequest:
+        if not self.url and self.current is None:
+            raise ValueError("Provide url or current markdown")
+        return self
+
+
+class DiffData(BaseModel):
+    url: str | None = None
+    changed: bool
+    diff: str
+    baseline_chars: int
+    current_chars: int
+
+
+class DiffResponse(BaseModel):
+    success: bool = True
+    data: DiffData | None = None
     error: ErrorBody | None = None

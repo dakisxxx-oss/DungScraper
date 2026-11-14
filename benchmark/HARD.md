@@ -1,8 +1,8 @@
 # Hard-site check
 
-Same 20 URLs, same rule, before and after the robustness pass.
+A row counts when the markdown has at least 20 words and is not a short bot interstitial. `robots.txt` refusals and missing official-API credentials are not counted as useful pages.
 
-A row counts when the markdown has at least 20 words and is not a short bot interstitial ("Just a moment", captcha, access denied). `robots.txt` refusals are reported separately. They are the crawler doing what it was asked, not a failed download.
+## Robustness pass
 
 | Result | Before | After |
 | --- | ---: | ---: |
@@ -10,10 +10,19 @@ A row counts when the markdown has at least 20 words and is not a short bot inte
 | robots.txt disallow | 3 | 3 |
 | Challenge page left | 3 | 2 |
 
-The change is the Stack Overflow question on `yield`. Before: browser, HTTP 403, 4 words, "Just a moment". After: browser, HTTP 403, about 16,000 words, and the answer text is in the markdown. The page still leads with the signup form.
+Stack Overflow's `yield` question went from a 4-word "Just a moment" page to about 16,000 words. AP News and Medium stayed on a challenge page. Reuters and Reddit were robots.txt refusals.
 
-AP News and Medium still end on "Just a moment" after the browser waits up to 8 seconds. Reuters, old Reddit, and Reddit disallow `DungScraperBot` in robots.txt.
+## API adapters
 
-Docs, Wikipedia, BBC, the Guardian, GitHub, React, arXiv, Amazon search, and CNN returned a long page on both runs. CNN's markdown opens on a feedback prompt in both runs.
+Same 20 URLs after the adapter round (`benchmark/hard-round3.json`), compared with the robustness result above.
 
-Re-run with `python benchmark/hard.py after`.
+| Result | Before this round | After |
+| --- | ---: | ---: |
+| Useful page | 15/20 | 15/20 |
+| robots.txt disallow | 1 (Reuters) | 1 (Reuters) |
+| Reddit, no API credentials | 2 robots refusals | 2 `reddit_not_configured` |
+| Challenge page left | 2 | 2 |
+
+Wikipedia, GitHub, Hacker News, and arXiv succeeded via their public APIs. Reddit HTML was not fetched. AP News and Medium still end on a security check. Overlay stripping can drop a leading Stack Overflow signup or CNN feedback block when another heading follows; those pages were already successes, so the 15/20 count does not move.
+
+Re-run with `python benchmark/hard.py round3`.

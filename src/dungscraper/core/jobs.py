@@ -136,10 +136,16 @@ async def post_webhook(client: httpx.AsyncClient, url: str, payload: dict, *, al
     log.warning("webhook failed", extra={"data": {"url": url, "error": last}})
 
 
-async def execute_crawl_job(job_id: str, services) -> None:
+async def execute_crawl_job(job_id: str, services, *, resume: bool = False) -> None:
     job = await services.jobs.get(job_id)
-    if job is None or job["status"] in {"cancelled", "completed"}:
+    if job is None or job["status"] == "cancelled":
         return
+    if job["status"] == "completed" and not resume:
+        return
+    if job["status"] == "completed":
+        return
+    prior_pages = list(job.get("pages") or [])
+    prior_checkpoint = job.get("checkpoint") if prior_pages or resume or job["status"] == "running" else None
     job["status"] = "running"
     job["updated_at"] = _now()
     await services.jobs.save(job)
@@ -159,6 +165,14 @@ async def execute_crawl_job(job_id: str, services) -> None:
         current = await services.jobs.get(job_id)
         return current is None or current["status"] == "cancelled"
 
+    async def on_checkpoint(checkpoint: dict) -> None:
+        current = await services.jobs.get(job_id)
+        if current is None:
+            return
+        current["checkpoint"] = checkpoint
+        current["updated_at"] = _now()
+        await services.jobs.save(current)
+
     try:
         result = await crawl_site(
             request,
@@ -169,6 +183,8 @@ async def execute_crawl_job(job_id: str, services) -> None:
             limiter=services.limiter,
             on_page=on_page,
             should_cancel=should_cancel,
+            checkpoint=prior_checkpoint,
+            on_checkpoint=on_checkpoint,
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("crawl job failed", extra={"data": {"id": job_id}})
@@ -183,9 +199,10 @@ async def execute_crawl_job(job_id: str, services) -> None:
     if current["status"] == "cancelled":
         return
     current["status"] = "completed"
-    current["pages"] = [page.model_dump(mode="json") for page in result["pages"]]
+    current["pages"] = prior_pages + [page.model_dump(mode="json") for page in result["pages"]]
+    current["resumed"] = bool(prior_checkpoint)
     current["errors"] = result["errors"]
-    current["completed"] = result["completed"]
+    current["completed"] = len(prior_pages) + result["completed"]
     current["failed"] = result["failed"]
     current["skipped_duplicates"] = result["skipped_duplicates"]
     current["skipped_robots"] = result["skipped_robots"]
@@ -237,6 +254,29 @@ async def start_crawl(request: CrawlRequest, services) -> CrawlJobData:
         return job_view(current or job)
     current = await services.jobs.get(job["id"])
     return job_view(current or job)
+
+
+async def resume_crawl(job_id: str, services) -> CrawlJobData:
+    job = await services.jobs.get(job_id)
+    if job is None:
+        raise DungScraperError("job_not_found", f"No crawl job {job_id}.", status=404)
+    if job["status"] == "completed":
+        return job_view(job)
+    if not job.get("checkpoint"):
+        raise DungScraperError(
+            "nothing_to_resume",
+            "This crawl has no saved frontier. Start a new crawl instead.",
+            status=400,
+        )
+    job["status"] = "running"
+    job["updated_at"] = _now()
+    await services.jobs.save(job)
+    mode = services.settings.resolved_crawl_mode()
+    if mode == "queue":
+        await services.jobs.enqueue(job_id)
+        return job_view(job)
+    services.spawn(execute_crawl_job(job_id, services, resume=True))
+    return job_view(job)
 
 
 async def cancel_crawl(job_id: str, services) -> CrawlJobData:

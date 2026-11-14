@@ -71,15 +71,28 @@ async def crawl_site(
     limiter: DomainRateLimiter | None = None,
     on_page: Progress | None = None,
     should_cancel: Cancel | None = None,
+    checkpoint: dict | None = None,
+    on_checkpoint=None,
 ) -> dict:
     cache = cache or NullCache()
     limiter = limiter or DomainRateLimiter()
     respect = settings.respect_robots_default if request.respect_robots is None else request.respect_robots
     gate = RobotsGate(client, settings.robots_user_agent, respect=respect, fail_open=settings.robots_fail_open)
     root = request.url
-    seen = {dedupe_key(root)}
-    queue: list[tuple[str, int]] = [(root, 0)]
-    if request.use_sitemap and request.max_depth >= 1:
+    resumed = bool(checkpoint and checkpoint.get("frontier"))
+    if resumed:
+        seen = set(checkpoint.get("seen") or [])
+        queue = [(item[0], int(item[1])) for item in checkpoint.get("frontier") or []]
+        skipped_duplicates = int(checkpoint.get("skipped_duplicates") or 0)
+        skipped_robots = int(checkpoint.get("skipped_robots") or 0)
+        fingerprints = [Fingerprint(**item) for item in checkpoint.get("fingerprints") or []]
+    else:
+        seen = {dedupe_key(root)}
+        queue = [(root, 0)]
+        skipped_duplicates = 0
+        skipped_robots = 0
+        fingerprints = []
+    if not resumed and request.use_sitemap and request.max_depth >= 1:
         robots_text = await gate.raw(root) if respect else ""
         try:
             sitemap_urls = await discover_sitemap_urls(client, root, limit=request.limit * 3, robots_text=robots_text)
@@ -97,9 +110,6 @@ async def crawl_site(
 
     pages: list[ScrapeData] = []
     errors: list[dict] = []
-    skipped_duplicates = 0
-    skipped_robots = 0
-    fingerprints: list[Fingerprint] = []
     semaphore = asyncio.Semaphore(max(1, request.concurrency))
     formats = list(request.scrape_options.formats)
 
@@ -156,6 +166,18 @@ async def crawl_site(
             pages.append(stored)
             if on_page:
                 await on_page(stored, len(pages))
+            if on_checkpoint:
+                await on_checkpoint(
+                    {
+                        "seen": list(seen),
+                        "frontier": [[queued, depth_] for queued, depth_ in queue],
+                        "skipped_duplicates": skipped_duplicates,
+                        "skipped_robots": skipped_robots,
+                        "fingerprints": [
+                            {"simhash": fp.simhash, "exact": fp.exact, "words": fp.words} for fp in fingerprints
+                        ],
+                    }
+                )
             if len(pages) >= request.limit:
                 break
             if depth < request.max_depth:
