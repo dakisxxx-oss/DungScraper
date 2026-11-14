@@ -25,6 +25,25 @@ class Hit:
     snippet: str
 
 
+def provider_chain(name: str, settings: Settings, *, fallback: bool = True) -> list[str]:
+    """Providers to try, in order. DuckDuckGo is always last when fallback is on."""
+    available: list[str] = []
+    if settings.brave_api_key:
+        available.append("brave")
+    if settings.serper_api_key:
+        available.append("serper")
+    if settings.searxng_url:
+        available.append("searxng")
+    available.append("duckduckgo")
+    if name == "auto":
+        return available
+    if name not in {"duckduckgo", "brave", "serper", "searxng"}:
+        raise DungScraperError("search_not_configured", f"Unknown search provider {name}.", status=400)
+    if not fallback:
+        return [name]
+    return [name] + [item for item in available if item != name]
+
+
 def resolve_provider(name: str, settings: Settings) -> str:
     if name == "brave":
         if not settings.brave_api_key:
@@ -202,6 +221,22 @@ async def search_serper(client: httpx.AsyncClient, query: str, limit: int, api_k
     ][:limit]
 
 
+async def _hits_from(provider: str, client: httpx.AsyncClient, query: str, limit: int, settings: Settings) -> list[Hit]:
+    if provider == "brave":
+        if not settings.brave_api_key:
+            raise DungScraperError("search_not_configured", "Brave search needs DUNGSCRAPER_BRAVE_API_KEY.", status=400)
+        return await search_brave(client, query, limit, settings.brave_api_key)
+    if provider == "serper":
+        if not settings.serper_api_key:
+            raise DungScraperError("search_not_configured", "Serper needs DUNGSCRAPER_SERPER_API_KEY.", status=400)
+        return await search_serper(client, query, limit, settings.serper_api_key)
+    if provider == "searxng":
+        if not settings.searxng_url:
+            raise DungScraperError("search_not_configured", "SearXNG needs DUNGSCRAPER_SEARXNG_URL.", status=400)
+        return await search_searxng(client, query, limit, settings.searxng_url)
+    return await search_duckduckgo(client, query, limit, settings)
+
+
 async def search_web(
     request: SearchRequest,
     *,
@@ -210,15 +245,32 @@ async def search_web(
     cache=None,
     browser=None,
 ) -> SearchData:
-    provider = resolve_provider(request.provider, settings)
-    if provider == "brave":
-        hits = await search_brave(client, request.query, request.limit, settings.brave_api_key)
-    elif provider == "serper":
-        hits = await search_serper(client, request.query, request.limit, settings.serper_api_key)
-    elif provider == "searxng":
-        hits = await search_searxng(client, request.query, request.limit, settings.searxng_url)
-    else:
-        hits = await search_duckduckgo(client, request.query, request.limit, settings)
+    chain = provider_chain(request.provider, settings, fallback=request.fallback)
+    hits: list[Hit] = []
+    provider = chain[0]
+    notes: list[str] = []
+    for index, candidate in enumerate(chain):
+        try:
+            found = await _hits_from(candidate, client, request.query, request.limit, settings)
+        except DungScraperError as exc:
+            notes.append(f"{candidate}: {exc.message}")
+            if index == 0 and not request.fallback:
+                raise
+            continue
+        if found:
+            hits = found
+            provider = candidate
+            if index:
+                notes.append(f"used {candidate} after {chain[0]} failed")
+            break
+        notes.append(f"{candidate}: no results")
+    if not hits:
+        detail = " ".join(notes) or "no providers returned results"
+        raise DungScraperError(
+            "search_failed",
+            "Search failed across the provider chain. " + detail,
+            status=502,
+        )
     results: list[SearchResultItem] = []
     for hit in hits[: request.limit]:
         item = SearchResultItem(url=hit.url, title=hit.title or None, snippet=hit.snippet or None)
@@ -240,4 +292,4 @@ async def search_web(
                 log.exception("search scrape failed", extra={"data": {"url": hit.url}})
                 item.error = str(exc)
         results.append(item)
-    return SearchData(query=request.query, provider=provider, results=results)
+    return SearchData(query=request.query, provider=provider, results=results, notes=notes)

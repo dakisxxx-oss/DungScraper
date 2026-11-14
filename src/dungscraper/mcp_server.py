@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 
@@ -12,6 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from dungscraper import __version__
 from dungscraper.config import get_settings
 from dungscraper.core.chunk import chunk_markdown
+from dungscraper.core.clip import clip_payload
 from dungscraper.core.extract import extract_structured
 from dungscraper.core.jobs import job_view, start_crawl
 from dungscraper.core.map import map_site
@@ -46,10 +48,11 @@ def build_mcp() -> MCPServer:
 
     @mcp.tool(description=(
         "Fetch one URL and return LLM-ready Markdown. Use this for a single page. "
-        "render=auto uses a fast HTTP fetch and falls back to a headless browser when the page is script-rendered. "
-        "render=browser forces Chromium (also use it for screenshots, clicks, and waits). "
-        "formats is a comma-separated list: markdown, html, raw_html, links, metadata, screenshot, chunks. "
-        "actions_json is a JSON list of {type: click|scroll|type|wait|press, selector, text, key, ms, pixels}. "
+        "render=auto fetches over HTTP, then retries in a headless browser on JavaScript shells, "
+        "HTTP 403/429, empty bodies, and challenge pages. render=browser forces Chromium. "
+        "only_main_content=true (default) drops nav and boilerplate; false keeps the full page. "
+        "Markdown is clipped to max_chars (default 12000). Pass offset=truncation.next_offset to read the rest. "
+        "For many URLs use batch_scrape. formats: markdown, html, raw_html, links, metadata, screenshot, chunks. "
         "Set respect_robots false only for a site you are allowed to access."
     ))
     async def scrape(
@@ -64,6 +67,8 @@ def build_mcp() -> MCPServer:
         proxy: str = "",
         actions_json: str = "",
         respect_robots: bool = True,
+        max_chars: int = 12000,
+        offset: int = 0,
     ) -> str:
         payload = {
             "url": url,
@@ -78,7 +83,55 @@ def build_mcp() -> MCPServer:
             "actions": _json_list(actions_json, "actions_json"),
             "respect_robots": respect_robots,
         }
-        return await _dispatch("POST", "/v1/scrape", payload, None)
+        raw = await _dispatch("POST", "/v1/scrape", payload, None)
+        return _dump(clip_payload(json.loads(raw), max_chars=_bounded(max_chars), offset=offset))
+
+    @mcp.tool(
+        name="batch_scrape",
+        description=(
+            "Scrape up to 10 URLs in one call. urls is a comma-separated or newline-separated list. "
+            "Each page's markdown is clipped so the combined tool result stays usable. "
+            "Prefer this over calling scrape in a loop. Failures are per URL and do not fail the whole batch."
+        ),
+    )
+    async def batch_scrape(
+        urls: str,
+        only_main_content: bool = True,
+        render: str = "auto",
+        concurrency: int = 4,
+        max_chars: int = 4000,
+    ) -> str:
+        parsed = [part.strip() for part in urls.replace("\n", ",").split(",") if part.strip()][:10]
+        payload = {
+            "urls": parsed,
+            "concurrency": max(1, min(concurrency, 8)),
+            "scrape_options": {"formats": ["markdown", "metadata"], "only_main_content": only_main_content, "render": render},
+        }
+
+        async def local(services):
+            from dungscraper.models import ScrapeRequest
+
+            semaphore = asyncio.Semaphore(payload["concurrency"])
+
+            async def one(url: str) -> dict:
+                async with semaphore:
+                    try:
+                        data = await scrape_url(
+                            ScrapeRequest(url=url, formats=["markdown", "metadata"], only_main_content=only_main_content, render=render),
+                            settings=services.settings,
+                            client=services.client,
+                            cache=services.cache,
+                            browser=services.browser,
+                        )
+                        return {"url": url, "data": data.model_dump(mode="json", exclude_none=True)}
+                    except DungScraperError as exc:
+                        return {"url": url, "error": f"{exc.code}: {exc.message}"}
+
+            results = await asyncio.gather(*(one(url) for url in parsed))
+            return {"results": list(results)}
+
+        raw = await _dispatch("POST", "/v1/batch/scrape", payload, local)
+        return _dump(clip_payload(json.loads(raw), max_chars=_bounded(max_chars), page_chars=_bounded(max_chars)))
 
     @mcp.tool(description=(
         "Crawl one site and return Markdown for each page. Bounded by limit and max_depth. "
@@ -105,7 +158,8 @@ def build_mcp() -> MCPServer:
             "respect_robots": respect_robots,
             "scrape_options": {"formats": ["markdown", "metadata"]},
         }
-        return await _dispatch("POST", "/v1/crawl", payload, None)
+        raw = await _dispatch("POST", "/v1/crawl", payload, None)
+        return _dump(clip_payload(json.loads(raw), max_chars=12000, page_chars=4000))
 
     @mcp.tool(description="Poll a crawl started with crawl(wait=false). Returns status, pages, and errors.")
     async def crawl_status(job_id: str) -> str:
@@ -120,8 +174,9 @@ def build_mcp() -> MCPServer:
     @mcp.tool(
         name="map_site",
         description=(
-            "Quickly list URLs on a site from sitemap.xml and links on the entry page. "
-            "Does not render JavaScript. Optional search keeps URLs or titles that contain the string."
+            "List URLs on a site from sitemap.xml and links on the entry page. "
+            "render=auto uses the browser when the entry page is a JavaScript shell or a challenge page. "
+            "render=browser always renders the entry page. Optional search filters URLs and titles."
         ),
     )
     async def map_site_tool(
@@ -129,16 +184,23 @@ def build_mcp() -> MCPServer:
         search: str = "",
         limit: int = 100,
         allow_subdomains: bool = False,
+        render: str = "auto",
     ) -> str:
         payload = {
             "url": url,
             "search": search or None,
             "limit": limit,
             "allow_subdomains": allow_subdomains,
+            "render": render,
         }
 
         async def local(services):
-            data = await map_site(MapRequest.model_validate(payload), settings=services.settings, client=services.client)
+            data = await map_site(
+                MapRequest.model_validate(payload),
+                settings=services.settings,
+                client=services.client,
+                browser=services.browser,
+            )
             return data.model_dump(mode="json")
 
         return await _dispatch("POST", "/v1/map", payload, local)
@@ -147,8 +209,9 @@ def build_mcp() -> MCPServer:
         name="search_web",
         description=(
             "Search the web, then scrape the top results into Markdown. "
-            "provider=auto uses Brave, Serper, or SearXNG when those env keys are set, otherwise keyless DuckDuckGo HTML. "
-            "DuckDuckGo may rate-limit datacenter IPs; set DUNGSCRAPER_SEARXNG_URL for a reliable self-hosted index."
+        "provider=auto tries configured Brave, Serper, and SearXNG keys before keyless DuckDuckGo. "
+        "If DuckDuckGo rate-limits or returns nothing, the next configured provider is tried. "
+        "Result markdown is clipped. Set DUNGSCRAPER_SEARXNG_URL for a self-hosted index."
         ),
     )
     async def search_web_tool(
@@ -169,7 +232,8 @@ def build_mcp() -> MCPServer:
             )
             return data.model_dump(mode="json")
 
-        return await _dispatch("POST", "/v1/search", payload, local)
+        raw = await _dispatch("POST", "/v1/search", payload, local)
+        return _dump(clip_payload(json.loads(raw), max_chars=12000, page_chars=2500))
 
     @mcp.tool(description=(
         "Extract JSON from a URL or from Markdown you already have. "
@@ -265,6 +329,10 @@ def _json_list(value: str, name: str) -> list:
     if not isinstance(parsed, list):
         raise ToolError(f"{name} must be a JSON list")
     return parsed
+
+
+def _bounded(value: int, *, limit: int = 32_000) -> int:
+    return max(500, min(int(value), limit))
 
 
 def _dump(data) -> str:

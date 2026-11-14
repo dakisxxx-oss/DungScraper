@@ -224,6 +224,46 @@ def score_markdown(markdown: str) -> float:
     return score
 
 
+CHALLENGE_MARKERS = (
+    "just a moment",
+    "enable javascript and cookies to continue",
+    "attention required",
+    "verify you are a human",
+    "cf-challenge",
+    "cf-browser-verification",
+    "are you a robot",
+    "px-captcha",
+    "datadome",
+    "access denied",
+    "request blocked",
+)
+
+
+def is_challenge(html: str, status: int = 200) -> bool:
+    """True when the HTTP response is a block, interstitial, or empty shell."""
+    soup = BeautifulSoup(html or "", "lxml")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    words = len(soup.get_text(" ", strip=True).split())
+    lowered = (html or "").lower()
+    if any(marker in lowered for marker in CHALLENGE_MARKERS) and words < 180:
+        return True
+    if status in {403, 429, 503} and words < 100:
+        return True
+    if status == 200 and words < 5 and len(html or "") < 400:
+        return True
+    return False
+
+
+def should_escalate(html: str, status: int = 200) -> str | None:
+    """Why an auto scrape should retry this HTTP response in the browser."""
+    if is_challenge(html, status):
+        return "challenge"
+    if looks_js_heavy(html):
+        return "js_shell"
+    return None
+
+
 def looks_js_heavy(html: str) -> bool:
     """True when the visible text is a shell and the body is probably injected.
 
@@ -293,6 +333,26 @@ def _candidate_html(html: str, url: str) -> list[tuple[str, str]]:
     return candidates
 
 
+def merge_structures(primary: str, others: list[str]) -> str:
+    """Keep tables and code blocks the winning extractor dropped."""
+    extras: list[str] = []
+    if "```" not in primary:
+        for other in others:
+            fences = re.findall(r"```[^\n]*\n.*?```", other, flags=re.DOTALL)
+            extras.extend(fences[:2])
+            if extras:
+                break
+    if not re.search(r"^\|", primary, flags=re.MULTILINE):
+        for other in others:
+            tables = re.findall(r"(?:^\|.+\|\n){2,}", other, flags=re.MULTILINE)
+            if tables:
+                extras.append(tables[0].strip())
+                break
+    if not extras:
+        return primary
+    return primary.rstrip() + "\n\n" + "\n\n".join(extras)
+
+
 def _ensure_title(markdown: str, title: str | None) -> str:
     if not title:
         return markdown
@@ -347,7 +407,8 @@ def html_to_content(
                     best_html, best_md = fragment, rendered
                     break
             chosen_html = best_html
-            markdown = best_md
+            others = [rendered for _score, _links, _fragment, rendered in ranked if rendered != best_md]
+            markdown = merge_structures(best_md, others)
         else:
             chosen_html = cleaned
             markdown = ""

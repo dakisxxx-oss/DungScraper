@@ -38,11 +38,12 @@ Health check: `GET /health` (no API key required).
 
 | | |
 | --- | --- |
-| `POST /v1/scrape` | One URL to Markdown. HTTP first, Chromium when the page is a script shell. |
+| `POST /v1/scrape` | One URL to Markdown. HTTP first, then Chromium on script shells, empty bodies, and challenge pages. |
+| `POST /v1/batch/scrape` | Up to 20 URLs. A failure on one URL does not fail the batch. |
 | `POST /v1/crawl` | A site, with depth, limit, path filters, sitemap, robots.txt, dedupe, and an optional webhook. |
 | `GET /v1/crawl/{id}` | Poll a crawl. `DELETE` cancels it. |
-| `POST /v1/map` | URLs from sitemaps plus links on the entry page. Optional `search` filter. |
-| `POST /v1/search` | Search, then scrape the hits. |
+| `POST /v1/map` | URLs from sitemaps plus links. `render=browser` reads JavaScript navigation. |
+| `POST /v1/search` | Search, then scrape the hits. Falls through providers when one rate-limits. |
 | `POST /v1/extract` | JSON from a page or from text, checked against a JSON Schema. |
 | `POST /v1/chunk` | Heading-aware chunks for retrieval. |
 
@@ -68,7 +69,11 @@ curl -s http://127.0.0.1:8741/v1/scrape \
 
 `formats` can include `markdown`, `html` (cleaned), `raw_html`, `links`, `metadata`, `screenshot`, and `chunks`.
 
-`render` is `auto` (default), `http`, or `browser`. Auto uses Chromium when the visible text is a shell and the real copy is in a script, or when you ask for a screenshot, a wait, or actions. PDF and DOCX URLs are downloaded and converted. A browser user agent is not used for those files, because some hosts answer it with a challenge page.
+`render` is `auto` (default), `http`, or `browser`. Auto uses HTTP first, then Chromium when the page is a script shell, the body is empty, or the status is a block or challenge (403, 429, interstitial text). Screenshots, waits, and actions also use the browser. The browser hides the automation flag and sends a normal desktop fingerprint. PDF and DOCX URLs stay on HTTP with a plain user agent, because some hosts answer a Chrome user agent with a challenge page.
+
+`onlyMainContent` defaults to true: nav, cookie banners, and obvious ads are removed, and the better of Trafilatura, Readability, and the `<article>` element is kept. Tables and code blocks dropped by one extractor are copied back from another. Set it to false for the full page. Links and image URLs are absolute.
+
+`DUNGSCRAPER_PROXY_URLS` is an optional comma-separated list. Requests rotate through it. A per-request `proxy` overrides the list.
 
 ```json
 {
@@ -113,7 +118,15 @@ Path filters are globs (`/blog/**`) or `re:` regular expressions. The same regis
 ```bash
 curl -s http://127.0.0.1:8741/v1/map \
   -H 'content-type: application/json' \
-  -d '{"url":"https://docs.python.org/3/","search":"tutorial","limit":50}'
+  -d '{"url":"https://docs.python.org/3/","search":"tutorial","limit":50,"render":"auto"}'
+```
+
+`render=auto` fetches the entry page over HTTP and switches to the browser when that page is a JavaScript shell or a challenge. `render=browser` always renders it, which is what you want for a nav that only exists after scripts run.
+
+```bash
+curl -s http://127.0.0.1:8741/v1/batch/scrape \
+  -H 'content-type: application/json' \
+  -d '{"urls":["https://example.com","https://httpbin.org/html"],"concurrency":2}'
 ```
 
 ```bash
@@ -122,7 +135,7 @@ curl -s http://127.0.0.1:8741/v1/search \
   -d '{"query":"self hosted web crawler","limit":3,"provider":"auto"}'
 ```
 
-`provider=auto` uses Brave, then Serper, then SearXNG, when those are configured, and otherwise DuckDuckGo's HTML endpoint, which needs no key. DuckDuckGo often rate-limits datacenter IPs. Point `DUNGSCRAPER_SEARXNG_URL` at your own SearXNG for a stable index.
+`provider=auto` tries Brave, then Serper, then SearXNG, when those are configured, and otherwise DuckDuckGo's HTML endpoint, which needs no key. If DuckDuckGo rate-limits or returns nothing, the next configured provider is tried. The response `notes` field says which provider was used. Point `DUNGSCRAPER_SEARXNG_URL` at your own SearXNG for a stable index. Set `"fallback": false` to stick to one provider.
 
 ### Extract and chunk
 
@@ -150,7 +163,7 @@ curl -s http://127.0.0.1:8741/v1/extract \
   }'
 ```
 
-The model is asked again once if the JSON does not validate. With no key and the default OpenAI base URL, the API returns `llm_not_configured` instead of pretending.
+The model is asked again once if the JSON does not validate. Pass `urls` (several pages) or `content` (markdown you already have), plus a `prompt`, a `schema`, or both. With no key and the default OpenAI base URL, the API returns `llm_not_configured` and does not invent a result.
 
 Chunking is local and does not call a model. Tokens are estimated at about four characters each, which is stable and does not download a tokenizer.
 
@@ -178,36 +191,38 @@ dungscraper scrape https://example.com --local    # no server, runs in this proc
 dungscraper crawl https://quotes.toscrape.com/ --limit 5
 dungscraper map https://example.com
 dungscraper search "web scraping markdown"
+dungscraper install-claude
 dungscraper chunk article.md --max-tokens 400
 dungscraper worker                                 # only when Redis is configured
 ```
 
 ## MCP
 
-The API serves streamable HTTP at `http://127.0.0.1:8741/mcp`. Send the same bearer token you use for the REST API when auth is on.
+Stdio needs no Docker and no running API. `dungscraper mcp` fetches in this process. Set `DUNGSCRAPER_BASE_URL` only when you want the stdio process to call an API that is already up.
 
-Stdio is the usual setup for Claude Desktop and Cursor. The MCP process calls the API, so the browser stays in the server and the agent does not need Playwright.
-
-`examples/claude_desktop.json` and `examples/cursor.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "dungscraper": {
-      "command": "dungscraper",
-      "args": ["mcp"],
-      "env": {
-        "DUNGSCRAPER_BASE_URL": "http://127.0.0.1:8741",
-        "DUNGSCRAPER_API_KEY": "dungscraper-dev-key"
-      }
-    }
-  }
-}
+```bash
+python -m dungscraper mcp
+uvx --from /path/to/this/repo dungscraper mcp
+pipx run --spec /path/to/this/repo dungscraper mcp
 ```
 
-Tools: `scrape`, `crawl`, `crawl_status`, `map_site`, `search_web`, `extract`, `chunk_text`.
+`uvx --from dungscraper` and `pipx run --spec dungscraper` are the same commands once the package is published to an index. Until then, pass the repo path or a git URL as the spec.
 
-If `DUNGSCRAPER_BASE_URL` is unset, `dungscraper mcp` scrapes in-process instead. A standalone streamable HTTP server is `dungscraper mcp --transport streamable-http --port 8765`.
+Install it into Claude Desktop on macOS or Windows. This writes `claude_desktop_config.json`, copies the previous file to `claude_desktop_config.json.bak-<timestamp>`, and does not restart Claude. Quit Claude and open it again to load the server.
+
+```bash
+dungscraper install-claude
+dungscraper install-claude --launcher uvx --from /path/to/this/repo
+dungscraper install-claude --launcher pipx --dry-run
+```
+
+`--launcher auto` uses the `dungscraper` executable on `PATH`. The config path is `%APPDATA%\Claude\claude_desktop_config.json` on Windows and `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS. Other MCP servers in the file are left alone.
+
+The API also serves streamable HTTP at `http://127.0.0.1:8741/mcp`. Send the same bearer token you use for the REST API when auth is on.
+
+Tools: `scrape`, `batch_scrape`, `crawl`, `crawl_status`, `map_site`, `search_web`, `extract`, `chunk_text`.
+
+`scrape` returns at most 12,000 characters of markdown. The `truncation` object has `next_offset`; call again with that `offset` for the next slice. Crawl pages and batch results are clipped the same way so a long site does not fill the model context. `examples/cursor.mcp.json` shows the Cursor stdio entry.
 
 ## Configuration
 
@@ -247,6 +262,18 @@ Ten public URLs, one uncached scrape each, default `render=auto`, measured in th
 
 What that shows here: static pages stay on HTTP and come back in a few hundred milliseconds. The JavaScript quotes page is detected and rendered (237 words, including the quotes, instead of the 4-word shell). Hacker News keeps its story links. The dummy PDF comes back as `Dummy PDF file`. Cookie and newsletter boilerplate did not show up in any of the ten. RFC 9110 is the slow one because the document is large, not because of the browser. Link counts include in-page anchors, which is why the RFC number is high.
 
+### Harder sites
+
+Twenty URLs (news, docs, a SPA, e-commerce, Q&A, Reddit, Medium), same rule both times: at least 20 words, and a short page that is still a bot interstitial does not count. Raw rows are in `benchmark/hard-before.json` and `benchmark/hard-after.json`.
+
+| | Before | After |
+| --- | ---: | ---: |
+| Useful page | 14/20 | 15/20 |
+| Refused because robots.txt disallows the bot | 3 | 3 |
+| Still a challenge page | 3 | 2 |
+
+The page that moved was the Stack Overflow question on `yield`: before, a 4-word "Just a moment" interstitial; after, about 16,000 words that include the answer. The markdown still opens on the signup form, and the HTTP status stays 403. AP News and Medium stay on "Just a moment" after an 8 second wait. Reuters and both Reddit URLs are refused because their robots.txt disallows `DungScraperBot`. Commercial crawlers often ignore that file, which is why they appear to fetch those sites. CNN's markdown, in both runs, opens on a feedback prompt even though the word count is high.
+
 ## Tests
 
 ```bash
@@ -257,15 +284,16 @@ Unit tests cover extraction, chunking, simhash, robots, sitemaps, SSRF checks, s
 
 ## Known gaps
 
-- No bot-challenge solving and no stealth browser. A host that requires a JavaScript challenge still returns the challenge page.
-- Search quality depends on the provider. DuckDuckGo HTML is the keyless default and can return an empty or blocked page.
-- Extract does nothing useful until you set an OpenAI-compatible model.
-- Duplicate detection is textual, not semantic. Two paraphrases of the same article can both be kept.
+- Managed challenges still win on some hosts. AP News and Medium returned a "Just a moment" page after the browser waited. There is no captcha vendor and no stealth service beyond hiding the automation flag.
+- Sites that disallow `DungScraperBot` in robots.txt are not fetched. Reuters and Reddit are in that set. Passing `respect_robots: false` is for a site you are allowed to read, not a default.
+- Signup walls and ad prompts can sit in front of real copy. Stack Overflow's answer is in the markdown, under a signup form. CNN's scrape opens on a feedback prompt.
+- Search still depends on a provider. With no Brave, Serper, or SearXNG key, DuckDuckGo is the only option, and it can rate-limit this host.
+- Extract returns `llm_not_configured` until you set an OpenAI-compatible model. It does not guess.
+- Duplicate detection is textual, not semantic.
 - One worker, one Redis. A crashed worker leaves a `running` job until the 24 hour TTL.
-- Map does not execute JavaScript. Crawl depth is what finds links that only exist after render, and only when `render` is `browser` or `auto` decides a page needs it.
 - Screenshots are JPEG base64 on the JSON response, not stored anywhere.
 - Token counts are a character estimate, not a model tokenizer.
-- The browser is Chromium only. Proxy support is one URL, not a rotating pool.
+- The browser is Chromium only. Proxy rotation is a list of URLs you supply, not a paid pool.
 
 ## License
 

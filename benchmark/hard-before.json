@@ -1,0 +1,227 @@
+{
+  "label": "before",
+  "success": 13,
+  "total": 20,
+  "rows": [
+    {
+      "url": "https://example.com",
+      "success": false,
+      "status": 200,
+      "render": "http",
+      "words": 28,
+      "ms": 243,
+      "title": "Example Domain",
+      "warnings": [],
+      "sample": "# Example Domain  This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes."
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 12886,
+      "ms": 2593,
+      "title": "Python (programming language) - Wikipedia",
+      "warnings": [],
+      "sample": "# Python (programming language)  **Python** is a [high-level](https://en.wikipedia.org/wiki/High-level_programming_language), [general-purpose programming language](https://en.wiki"
+    },
+    {
+      "url": "https://docs.python.org/3/library/asyncio.html",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 338,
+      "ms": 238,
+      "title": "asyncio \u2014 Asynchronous I/O",
+      "warnings": [],
+      "sample": "# ``` asyncio ``` \u2014 Asynchronous I/O[\u00b6](https://docs.python.org#module-asyncio)  asyncio is a library to write **concurrent** code using the **async/await** syntax.  asyncio is use"
+    },
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTML",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1197,
+      "ms": 264,
+      "title": "HTML: HyperText Markup Language | MDN",
+      "warnings": [],
+      "sample": "# HTML: HyperText Markup Language  **HTML** (HyperText Markup Language) is the most basic building block of the Web. It defines the meaning and structure of web content. Other tech"
+    },
+    {
+      "url": "https://github.com/microsoft/playwright",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1665,
+      "ms": 849,
+      "title": "GitHub - microsoft/playwright: Playwright is a framework for Web Testing and Automation. It allows testing Chromium, Firefox and WebKit with a single API.",
+      "warnings": [],
+      "sample": "# GitHub - microsoft/playwright: Playwright is a framework for Web Testing and Automation. It allows testing Chromium, Firefox and WebKit with a single API.  [Skip to content](#sta"
+    },
+    {
+      "url": "https://news.ycombinator.com/",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1043,
+      "ms": 537,
+      "title": "Hacker News",
+      "warnings": [],
+      "sample": "|  |  |  |  | | --- | --- | --- | --- | | |  |  |  | | --- | --- | --- | |  | **[Hacker News](https://news.ycombinator.com/news)**[new](https://news.ycombinator.com/newest) | [past"
+    },
+    {
+      "url": "https://stackoverflow.com/questions/231767/what-does-the-yield-keyword-do",
+      "success": false,
+      "status": 403,
+      "render": "browser",
+      "words": 4,
+      "ms": 450,
+      "title": "Just a moment...",
+      "warnings": [
+        "http_status_403"
+      ],
+      "sample": "# Just a moment..."
+    },
+    {
+      "url": "https://quotes.toscrape.com/js/",
+      "success": true,
+      "status": 200,
+      "render": "browser",
+      "words": 237,
+      "ms": 340,
+      "title": "Quotes to Scrape",
+      "warnings": [],
+      "sample": "# [Quotes to Scrape](https://quotes.toscrape.com/)  [Login](https://quotes.toscrape.com/login)  \u201cThe world as we have created it is a process of our thinking. It cannot be changed "
+    },
+    {
+      "url": "https://react.dev/learn",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 2611,
+      "ms": 718,
+      "title": "Quick Start \u2013 React",
+      "warnings": [],
+      "sample": "# Quick Start \u2013 React  Welcome to the React documentation! This page will give you an introduction to 80% of the React concepts that you will use on a daily basis.  ### You will le"
+    },
+    {
+      "url": "https://httpbin.org/html",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 606,
+      "ms": 39,
+      "title": null,
+      "warnings": [],
+      "sample": "# Herman Melville - Moby-Dick  Availing himself of the mild, summer-cool weather that now reigned in these latitudes, and in preparation for the peculiarly active pursuits shortly "
+    },
+    {
+      "url": "https://www.bbc.com/news",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1626,
+      "ms": 337,
+      "title": "BBC News - Breaking news, video and the latest top stories from the U.S. and around the world",
+      "warnings": [],
+      "sample": "# BBC News - Breaking news, video and the latest top stories from the U.S. and around the world  [Skip to content](#bbc-main)  [Watch Live](https://www.bbc.com/watch-live-news/)  S"
+    },
+    {
+      "url": "https://www.theguardian.com/world",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1763,
+      "ms": 478,
+      "title": "Latest news from around the world | The Guardian",
+      "warnings": [],
+      "sample": "# Latest news from around the world | The Guardian  [Skip to main content](#maincontent)[Skip to navigation](#navigation)  [Print subscriptions](https://support.theguardian.com/sub"
+    },
+    {
+      "url": "https://www.reuters.com/world/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 123,
+      "error": "robots_disallowed: https://www.reuters.com/world/ is disallowed by robots.txt for DungScraperBot/0.1. Pass respect_robots=false only for a site you are allowed to access."
+    },
+    {
+      "url": "https://apnews.com/",
+      "success": false,
+      "status": 403,
+      "render": "browser",
+      "words": 4,
+      "ms": 168,
+      "title": "Just a moment...",
+      "warnings": [
+        "http_status_403"
+      ],
+      "sample": "# Just a moment..."
+    },
+    {
+      "url": "https://old.reddit.com/r/Python/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 36,
+      "error": "robots_disallowed: https://old.reddit.com/r/Python/ is disallowed by robots.txt for DungScraperBot/0.1. Pass respect_robots=false only for a site you are allowed to access."
+    },
+    {
+      "url": "https://www.reddit.com/r/Python/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 29,
+      "error": "robots_disallowed: https://www.reddit.com/r/Python/ is disallowed by robots.txt for DungScraperBot/0.1. Pass respect_robots=false only for a site you are allowed to access."
+    },
+    {
+      "url": "https://medium.com/",
+      "success": false,
+      "status": 403,
+      "render": "browser",
+      "words": 4,
+      "ms": 175,
+      "title": "Just a moment...",
+      "warnings": [
+        "http_status_403"
+      ],
+      "sample": "# Just a moment..."
+    },
+    {
+      "url": "https://arxiv.org/abs/1706.03762",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 784,
+      "ms": 267,
+      "title": "Attention Is All You Need",
+      "warnings": [],
+      "sample": "# Attention Is All You Need  [Skip to main content](#content)  [![archive](https://static.arxiv.org/static/design-system/latest/logos/arxiv-logo.svg)](https://arxiv.org/) [Search]("
+    },
+    {
+      "url": "https://www.amazon.com/s?k=kindle",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 2544,
+      "ms": 1689,
+      "title": "Amazon.com : kindle",
+      "warnings": [],
+      "sample": "# Amazon.com : kindle  ![](https://fls-na.amazon.com/1/batch/1/OP/ATVPDKIKX0DER:136-9576155-8428333:7ZDAE507H3E93QPM849B$uedata=s:%2Frd%2Fuedata%3Fstaticb%26id%3D7ZDAE507H3E93QPM84"
+    },
+    {
+      "url": "https://edition.cnn.com/",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 2363,
+      "ms": 1244,
+      "title": "Breaking News, Latest News and Videos | CNN",
+      "warnings": [],
+      "sample": "### CNN values your feedback  1. How relevant is this ad to you?  2. Did you encounter any technical issues?  Video player was slow to load content  Video content never loaded  Ad "
+    }
+  ]
+}

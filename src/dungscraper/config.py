@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     browser_concurrency: int = 3
     allow_private_networks: bool = False
     proxy_url: str = ""
+    proxy_urls: str = ""
+    mcp_max_chars: int = 12_000
     llm_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
     llm_model: str = "gpt-4o-mini"
@@ -64,6 +66,15 @@ class Settings(BaseSettings):
         if self.crawl_mode == "auto":
             return "queue" if self.redis_url else "inline"
         return self.crawl_mode
+
+    @property
+    def proxy_list(self) -> list[str]:
+        found: list[str] = []
+        for part in (self.proxy_url, *self.proxy_urls.split(",")):
+            value = part.strip()
+            if value and value not in found:
+                found.append(value)
+        return found
 
 
 @lru_cache

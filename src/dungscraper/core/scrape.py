@@ -13,9 +13,9 @@ import httpx
 from dungscraper.config import Settings, get_settings
 from dungscraper.core.cache import Cache, NullCache
 from dungscraper.core.chunk import chunk_markdown
-from dungscraper.core.content import html_to_content, looks_js_heavy
+from dungscraper.core.content import html_to_content, should_escalate
 from dungscraper.core.documents import docx_to_markdown, pdf_to_markdown
-from dungscraper.core.fetch import BrowserManager, RawFetch, http_fetch, make_client, sniff_kind
+from dungscraper.core.fetch import BrowserManager, RawFetch, http_fetch, make_client, proxy_rotator, sniff_kind
 from dungscraper.core.robots import RobotsGate
 from dungscraper.core.urls import clean_request_url, safe_url
 from dungscraper.errors import DungScraperError
@@ -170,7 +170,7 @@ async def scrape_url(
             data.timings_ms = {"total_ms": int((time.perf_counter() - started) * 1000)}
             return data
 
-    proxy = request.proxy or settings.proxy_url or None
+    proxy = request.proxy or proxy_rotator(settings).next()
     own_client = client is None or bool(request.proxy)
     if client is None or request.proxy:
         client = make_client(settings, proxy=proxy)
@@ -203,9 +203,12 @@ async def scrape_url(
                 timeout=(request.timeout_ms / 1000) if request.timeout_ms else None,
             )
             kind = sniff_kind(fetched.content, fetched.content_type, fetched.url)
-            if kind == "html" and request.render == "auto" and looks_js_heavy(fetched.text or ""):
-                fetched.warnings.append("upgraded_to_browser")
-                fetched = await _maybe_browser(request, settings, browser_mgr)
+            reason = should_escalate(fetched.text or "", fetched.status_code) if kind == "html" else None
+            if reason and request.render == "auto":
+                fetched.warnings.append(f"upgraded_to_browser:{reason}")
+                browser_fetch = await _maybe_browser(request, settings, browser_mgr)
+                browser_fetch.warnings = [*fetched.warnings, *browser_fetch.warnings]
+                fetched = browser_fetch
         fetch_ms = int((time.perf_counter() - fetch_started) * 1000)
         kind = sniff_kind(fetched.content, fetched.content_type, fetched.url)
         if fetched.status_code >= 400 and not (fetched.text or fetched.content):

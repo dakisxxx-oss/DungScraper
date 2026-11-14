@@ -10,6 +10,7 @@ import httpx
 from playwright.async_api import Browser, async_playwright
 
 from dungscraper.config import Settings
+from dungscraper.core.content import is_challenge
 from dungscraper.core.urls import safe_url
 from dungscraper.errors import DungScraperError
 from dungscraper.log import get_logger
@@ -37,8 +38,13 @@ class RawFetch:
 def merge_headers(settings: Settings, extra: dict[str, str]) -> dict[str, str]:
     headers = {
         "User-Agent": settings.fetch_user_agent,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Upgrade-Insecure-Requests": "1",
+        "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
     }
     for key, value in extra.items():
         if key.lower() in BLOCKED_HEADERS:
@@ -186,6 +192,41 @@ def _playwright_proxy(proxy: str | None) -> dict | None:
     return settings
 
 
+class ProxyRotator:
+    """Round-robin over DUNGSCRAPER_PROXY_URL plus DUNGSCRAPER_PROXY_URLS."""
+
+    def __init__(self, proxies: list[str]) -> None:
+        self.proxies = [proxy for proxy in proxies if proxy]
+        self._index = 0
+
+    def next(self) -> str | None:
+        if not self.proxies:
+            return None
+        proxy = self.proxies[self._index % len(self.proxies)]
+        self._index += 1
+        return proxy
+
+
+_rotators: dict[tuple[str, ...], ProxyRotator] = {}
+
+
+def proxy_rotator(settings: Settings) -> ProxyRotator:
+    key = tuple(settings.proxy_list)
+    rotator = _rotators.get(key)
+    if rotator is None:
+        rotator = ProxyRotator(list(key))
+        _rotators[key] = rotator
+    return rotator
+
+
+STEALTH_INIT = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+window.chrome = window.chrome || { runtime: {} };
+Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+"""
+
+
 class BrowserManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -210,7 +251,12 @@ class BrowserManager:
                 self._playwright = await async_playwright().start()
                 self._browser = await self._playwright.chromium.launch(
                     headless=True,
-                    args=["--disable-dev-shm-usage", "--no-sandbox"],
+                    args=[
+                        "--disable-dev-shm-usage",
+                        "--no-sandbox",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                    ignore_default_args=["--enable-automation"],
                 )
         return self._browser
 
@@ -233,11 +279,19 @@ class BrowserManager:
             browser = await self._ensure()
             merged = merge_headers(self.settings, headers or {})
             user_agent = merged.pop("User-Agent", self.settings.fetch_user_agent)
+            # The browser sets Sec-Fetch-* itself. Forcing document values onto
+            # every subresource is a tell, so those stay off the context.
+            merged.pop("sec-ch-ua", None)
+            merged.pop("sec-ch-ua-mobile", None)
+            merged.pop("sec-ch-ua-platform", None)
+            merged.pop("Upgrade-Insecure-Requests", None)
             context_kwargs: dict = {
                 "user_agent": user_agent,
                 "extra_http_headers": merged,
-                "viewport": {"width": 1280, "height": 800},
+                "viewport": {"width": 1366, "height": 768},
                 "locale": "en-US",
+                "timezone_id": "America/New_York",
+                "color_scheme": "light",
             }
             proxy_settings = _playwright_proxy(proxy or self.settings.proxy_url or None)
             if proxy_settings:
@@ -258,6 +312,7 @@ class BrowserManager:
                 await route.continue_()
 
             page = await context.new_page()
+            await page.add_init_script(STEALTH_INIT)
             timeout = timeout_ms or int(self.settings.browser_timeout_seconds * 1000)
             page.set_default_timeout(timeout)
             try:
@@ -266,7 +321,29 @@ class BrowserManager:
                     await context.add_cookies(
                         [{"name": key, "value": value, "url": url} for key, value in cookies.items()]
                     )
-                response = await page.goto(url, wait_until=wait_until, timeout=timeout)
+                response = None
+                last_goto: Exception | None = None
+                for attempt in range(2):
+                    try:
+                        response = await page.goto(url, wait_until=wait_until, timeout=timeout)
+                        last_goto = None
+                        break
+                    except Exception as exc:
+                        last_goto = exc
+                        if attempt == 0:
+                            await asyncio.sleep(0.6)
+                            continue
+                        raise DungScraperError(
+                            "fetch_failed",
+                            f"Browser navigation to {safe_url(url)} failed: {exc}",
+                            status=504,
+                        ) from exc
+                if last_goto is not None:
+                    raise DungScraperError(
+                        "fetch_failed",
+                        f"Browser navigation to {safe_url(url)} failed: {last_goto}",
+                        status=504,
+                    ) from last_goto
                 if wait_for:
                     await page.wait_for_selector(wait_for, timeout=timeout)
                 if wait_ms:
@@ -283,11 +360,26 @@ class BrowserManager:
                             status=422,
                         ) from exc
                 html = await page.content()
+                status = response.status if response is not None else 200
+                if is_challenge(html, status):
+                    try:
+                        await page.wait_for_function(
+                            """() => {
+                                const title = (document.title || '').toLowerCase();
+                                const words = (document.body && document.body.innerText || '').trim().split(/\\s+/).length;
+                                return !title.includes('just a moment') && words > 40;
+                            }""",
+                            timeout=8000,
+                        )
+                    except Exception:
+                        pass
+                    html = await page.content()
                 shot = None
                 if screenshot:
                     shot = await page.screenshot(type="jpeg", quality=60, full_page=screenshot_full_page)
-                status = response.status if response is not None else 200
                 warnings = [f"http_status_{status}"] if status >= 400 else []
+                if is_challenge(html, status):
+                    warnings.append("challenge_unresolved")
                 return RawFetch(
                     url=page.url,
                     status_code=status,

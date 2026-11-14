@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Optional
 
 import typer
@@ -65,7 +66,11 @@ def mcp(
     host: str = typer.Option("127.0.0.1"),
     port: int = typer.Option(8765),
 ) -> None:
-    """Run the MCP server. Point DUNGSCRAPER_BASE_URL at the API to avoid a second browser."""
+    """Run the MCP server over stdio. No API process or Docker is required.
+
+    Set DUNGSCRAPER_BASE_URL only when a DungScraper server is already running
+    and this process should call it instead of fetching itself.
+    """
     from dungscraper.mcp_server import build_mcp
 
     server = build_mcp()
@@ -76,6 +81,29 @@ def mcp(
         server.run("streamable-http", host=host, port=port, stateless_http=True)
         return
     _echo_error(DungScraperError("invalid_transport", "transport must be stdio or streamable-http"))
+
+
+@app.command("install-claude")
+def install_claude(
+    config: Optional[str] = typer.Option(None, help="Config path. Default is the Claude Desktop path for this OS."),
+    launcher: str = typer.Option("auto", help="auto, uvx, pipx, or python."),
+    from_spec: Optional[str] = typer.Option(None, "--from", help="uvx/pipx package spec or path. Default: dungscraper."),
+    dry_run: bool = typer.Option(False, help="Print the config change without writing it."),
+) -> None:
+    """Add DungScraper to Claude Desktop. Backs up the config and does not restart Claude."""
+    from dungscraper.install_claude import claude_config_path, install_claude_config, launch_command
+
+    path = Path(config) if config else claude_config_path()
+    command = launch_command(launcher, from_spec=from_spec)
+    if dry_run:
+        typer.echo(json.dumps({"path": str(path), "command": command}, indent=2))
+        typer.echo("Dry run. Claude was not restarted.")
+        return
+    backup = install_claude_config(path, command=command)
+    typer.echo(f"Wrote {path}")
+    if backup:
+        typer.echo(f"Backed up the previous file to {backup}")
+    typer.echo("Claude was not restarted. Quit Claude Desktop and open it again to load DungScraper.")
 
 
 @app.command()

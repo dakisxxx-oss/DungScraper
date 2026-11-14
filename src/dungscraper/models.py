@@ -245,6 +245,7 @@ class MapRequest(BaseModel):
     respect_robots: bool | None = Field(
         None, validation_alias=AliasChoices("respect_robots", "respectRobots")
     )
+    render: Literal["auto", "http", "browser"] = "auto"
 
     @field_validator("url")
     @classmethod
@@ -255,7 +256,7 @@ class MapRequest(BaseModel):
 class MapLink(BaseModel):
     url: str
     title: str | None = None
-    source: Literal["sitemap", "link"]
+    source: Literal["sitemap", "link", "browser"]
 
 
 class MapData(BaseModel):
@@ -263,6 +264,7 @@ class MapData(BaseModel):
     links: list[MapLink]
     sitemap_count: int = 0
     link_count: int = 0
+    rendered_with: str = "http"
 
 
 class MapResponse(BaseModel):
@@ -278,6 +280,7 @@ class SearchRequest(BaseModel):
     limit: int = Field(5, ge=1, le=10)
     provider: Literal["auto", "duckduckgo", "searxng", "brave", "serper"] = "auto"
     scrape: bool = True
+    fallback: bool = True
     scrape_options: ScrapeOptions = Field(
         default_factory=lambda: ScrapeOptions(formats=["markdown", "metadata"]),
         validation_alias=AliasChoices("scrape_options", "scrapeOptions"),
@@ -297,6 +300,39 @@ class SearchData(BaseModel):
     query: str
     provider: str
     results: list[SearchResultItem]
+    notes: list[str] = Field(default_factory=list)
+
+
+class BatchScrapeRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    urls: list[str] = Field(min_length=1, max_length=20)
+    scrape_options: ScrapeOptions = Field(
+        default_factory=lambda: ScrapeOptions(formats=["markdown", "metadata"]),
+        validation_alias=AliasChoices("scrape_options", "scrapeOptions"),
+    )
+    concurrency: int = Field(4, ge=1, le=8)
+
+    @field_validator("urls")
+    @classmethod
+    def check_urls(cls, value: list[str]) -> list[str]:
+        return [_http_url(item) for item in value]
+
+
+class BatchItem(BaseModel):
+    url: str
+    data: ScrapeData | None = None
+    error: str | None = None
+
+
+class BatchScrapeData(BaseModel):
+    results: list[BatchItem]
+
+
+class BatchScrapeResponse(BaseModel):
+    success: bool = True
+    data: BatchScrapeData | None = None
+    error: ErrorBody | None = None
 
 
 class SearchResponse(BaseModel):

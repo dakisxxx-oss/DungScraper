@@ -86,6 +86,9 @@ class DungScraper:
     def scrape(self, url: str, **options: Any) -> dict[str, Any]:
         return self._request("POST", "/v1/scrape", {"url": url, **options})["data"]
 
+    def batch_scrape(self, urls: list[str], **options: Any) -> dict[str, Any]:
+        return self._request("POST", "/v1/batch/scrape", {"urls": urls, **options})["data"]
+
     def crawl(self, url: str, **options: Any) -> dict[str, Any]:
         return self._request("POST", "/v1/crawl", {"url": url, **options})["data"]
 

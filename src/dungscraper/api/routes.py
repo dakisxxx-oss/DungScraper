@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -15,6 +17,10 @@ from dungscraper.core.scrape import scrape_url
 from dungscraper.core.search import search_web
 from dungscraper.errors import DungScraperError
 from dungscraper.models import (
+    BatchItem,
+    BatchScrapeData,
+    BatchScrapeRequest,
+    BatchScrapeResponse,
     ChunkData,
     ChunkRequest,
     ChunkResponse,
@@ -67,6 +73,36 @@ async def scrape(body: ScrapeRequest, request: Request) -> ScrapeResponse:
 
 
 @router.post(
+    "/v1/batch/scrape",
+    response_model=BatchScrapeResponse,
+    response_model_exclude_none=True,
+    tags=["scrape"],
+    summary="Scrape many URLs",
+)
+async def batch_scrape(body: BatchScrapeRequest, request: Request) -> BatchScrapeResponse:
+    services = _services(request)
+    semaphore = asyncio.Semaphore(body.concurrency)
+
+    async def one(url: str) -> BatchItem:
+        async with semaphore:
+            try:
+                options = body.scrape_options.model_dump()
+                data = await scrape_url(
+                    ScrapeRequest(url=url, **options),
+                    settings=services.settings,
+                    client=services.client,
+                    cache=services.cache,
+                    browser=services.browser,
+                )
+                return BatchItem(url=url, data=data)
+            except DungScraperError as exc:
+                return BatchItem(url=url, error=f"{exc.code}: {exc.message}")
+
+    results = await asyncio.gather(*(one(url) for url in body.urls))
+    return BatchScrapeResponse(success=True, data=BatchScrapeData(results=list(results)))
+
+
+@router.post(
     "/v1/crawl",
     response_model=CrawlResponse,
     response_model_exclude_none=True,
@@ -113,7 +149,12 @@ async def crawl_cancel(job_id: str, request: Request) -> CrawlResponse:
 )
 async def map_urls(body: MapRequest, request: Request) -> MapResponse:
     services = _services(request)
-    data = await map_site(body, settings=services.settings, client=services.client)
+    data = await map_site(
+        body,
+        settings=services.settings,
+        client=services.client,
+        browser=services.browser,
+    )
     return MapResponse(success=True, data=data)
 
 

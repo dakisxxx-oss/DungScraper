@@ -1,4 +1,4 @@
-"""Fast URL discovery: sitemaps plus links on the entry page. No browser."""
+"""URL discovery from sitemaps and page links. Auto can render a JS shell."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from urllib.parse import urlsplit
 import httpx
 
 from dungscraper.config import Settings
-from dungscraper.core.content import extract_links
-from dungscraper.core.fetch import http_fetch
+from dungscraper.core.content import extract_links, should_escalate
+from dungscraper.core.fetch import BrowserManager, http_fetch
 from dungscraper.core.robots import RobotsGate
 from dungscraper.core.sitemap import discover_sitemap_urls
 from dungscraper.core.urls import dedupe_key, extension_skipped, path_matches, same_site
@@ -42,6 +42,7 @@ async def map_site(
     *,
     settings: Settings,
     client: httpx.AsyncClient,
+    browser: BrowserManager | None = None,
 ) -> MapData:
     assert_public_url(request.url, allow_private=settings.allow_private_networks)
     respect = settings.respect_robots_default if request.respect_robots is None else request.respect_robots
@@ -81,15 +82,32 @@ async def map_site(
             sitemap_count += len(links) - before
 
     link_count = 0
+    rendered_with = "http"
     if request.discover_links and len(links) < request.limit:
         fetched = await http_fetch(client, request.url, settings=settings)
+        use_browser = request.render == "browser" or (
+            request.render == "auto"
+            and browser is not None
+            and bool(should_escalate(fetched.text or "", fetched.status_code))
+        )
+        source = "link"
+        if use_browser and browser is not None:
+            fetched = await browser.fetch(request.url, proxy=settings.proxy_url or None)
+            rendered_with = "browser"
+            source = "browser"
         if fetched.text:
             for item in extract_links(fetched.text, fetched.url):
                 if respect and not await gate.allowed(item.url):
                     continue
                 before = len(links)
-                add(item.url, item.text or None, "link")
+                add(item.url, item.text or None, source)
                 link_count += len(links) - before
                 if len(links) >= request.limit:
                     break
-    return MapData(url=request.url, links=links, sitemap_count=sitemap_count, link_count=link_count)
+    return MapData(
+        url=request.url,
+        links=links,
+        sitemap_count=sitemap_count,
+        link_count=link_count,
+        rendered_with=rendered_with,
+    )
