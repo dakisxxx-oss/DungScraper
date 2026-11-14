@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dungscraper": {
+      "command": "dungscraper",
+      "args": ["mcp"],
+      "env": {
+        "DUNGSCRAPER_BASE_URL": "http://127.0.0.1:8741",
+        "DUNGSCRAPER_API_KEY": "dungscraper-dev-key"
+      }
+    }
+  }
+}
