@@ -25,4 +25,17 @@ Same 20 URLs after the adapter round (`benchmark/hard-round3.json`), compared wi
 
 Wikipedia, GitHub, Hacker News, and arXiv succeeded via their public APIs. Reddit HTML was not fetched. AP News and Medium still end on a security check. Overlay stripping can drop a leading Stack Overflow signup or CNN feedback block when another heading follows; those pages were already successes, so the 15/20 count does not move.
 
-Re-run with `python benchmark/hard.py round3`.
+## Anti-bot ladder
+
+Same 20 URLs on this VPS after the free ladder (`benchmark/hard-round4.json`). curl_cffi was installed. Patchright, Camoufox, Byparr, and SeleniumBase were not running.
+
+| Result | Round 3 | Round 4 |
+| --- | ---: | ---: |
+| Useful page | 15/20 | 15/20 |
+| Reuters, robots.txt | 1 | 1 |
+| Reddit, no API credentials | 2 | 2 |
+| Challenge page left | 2 | 2 |
+
+curl_cffi ran on the Cloudflare pages and still got HTTP 403 from this datacenter address. The browser step then used the bundled Playwright fallback (`tier_unavailable:patchright`). AP News and Medium still stop on "Performing security verification". Stack Overflow's markdown in this run opens on the question title instead of the signup form. A home IP, Patchright, or a Byparr sidecar can do better than this VPS; the ladder does not claim to solve image captchas.
+
+Re-run with `python benchmark/hard.py round4`.

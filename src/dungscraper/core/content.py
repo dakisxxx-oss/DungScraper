@@ -231,12 +231,51 @@ CHALLENGE_MARKERS = (
     "verify you are a human",
     "cf-challenge",
     "cf-browser-verification",
+    "cf-chl",
+    "__cf_chl",
+    "challenges.cloudflare.com",
+    "cf-turnstile",
     "are you a robot",
     "px-captcha",
+    "perimeterx",
     "datadome",
+    "captcha-delivery.com",
+    "akamai",
+    "_abck",
     "access denied",
     "request blocked",
+    "performing security verification",
 )
+
+
+def challenge_vendor(html: str, status: int = 200, headers: dict | None = None) -> str | None:
+    """Name the vendor behind a challenge page, if this response is one."""
+    if not is_challenge(html, status):
+        return None
+    blob = (html or "").lower()
+    if headers:
+        blob += " " + " ".join(f"{key}:{value}" for key, value in headers.items()).lower()
+    if any(marker in blob for marker in ("datadome", "captcha-delivery.com")):
+        return "datadome"
+    if any(marker in blob for marker in ("perimeterx", "px-captcha", "_pxhd", "px-cloud.net")):
+        return "perimeterx"
+    if any(marker in blob for marker in ("akamai", "_abck", "ak_bmsc")):
+        return "akamai"
+    if any(
+        marker in blob
+        for marker in (
+            "cf-chl",
+            "__cf_chl",
+            "cf-ray",
+            "just a moment",
+            "challenges.cloudflare.com",
+            "cf-turnstile",
+            "cf-browser-verification",
+            "performing security verification",
+        )
+    ):
+        return "cloudflare"
+    return "unknown"
 
 
 def is_challenge(html: str, status: int = 200) -> bool:

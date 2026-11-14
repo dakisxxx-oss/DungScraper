@@ -21,6 +21,7 @@ services:
       DUNGSCRAPER_SERPER_API_KEY: ${DUNGSCRAPER_SERPER_API_KEY:-}
       DUNGSCRAPER_SEARXNG_URL: ${DUNGSCRAPER_SEARXNG_URL:-}
       DUNGSCRAPER_LOG_JSON: "true"
+      DUNGSCRAPER_FLARESOLVERR_URL: ${DUNGSCRAPER_FLARESOLVERR_URL:-}
     depends_on:
       - redis
     healthcheck:
@@ -44,3 +45,13 @@ services:
     environment: *dungscraper_env
     depends_on:
       - redis
+
+  # Free Cloudflare clearance sidecar. Same /v1 API as FlareSolverr.
+  # docker compose --profile antibot up
+  # DUNGSCRAPER_FLARESOLVERR_URL=http://byparr:8191/v1
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest
+    profiles: ["antibot"]
+    restart: unless-stopped
+    ports:
+      - "8191:8191"

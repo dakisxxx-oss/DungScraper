@@ -14,9 +14,10 @@ from dungscraper.adapters import adapter_for, fetch_via_adapter
 from dungscraper.config import Settings, get_settings
 from dungscraper.core.cache import Cache, NullCache
 from dungscraper.core.chunk import chunk_markdown
-from dungscraper.core.content import html_to_content, is_challenge, should_escalate
+from dungscraper.core.content import challenge_vendor, html_to_content, is_challenge, should_escalate
+from dungscraper.core.escalate import escalate_challenge
 from dungscraper.core.documents import docx_to_markdown, pdf_to_markdown
-from dungscraper.core.fetch import BrowserManager, RawFetch, http_fetch, make_client, proxy_rotator, sniff_kind
+from dungscraper.core.fetch import BrowserManager, RawFetch, http_fetch, make_client, sticky_proxies, sniff_kind
 from dungscraper.core.robots import RobotsGate
 from dungscraper.core.urls import clean_request_url, safe_url
 from dungscraper.errors import DungScraperError
@@ -171,7 +172,7 @@ async def scrape_url(
             data.timings_ms = {"total_ms": int((time.perf_counter() - started) * 1000)}
             return data
 
-    proxy = request.proxy or proxy_rotator(settings).next()
+    proxy = request.proxy or sticky_proxies(settings).for_domain(urlsplit(target).hostname or "")
     own_client = client is None or bool(request.proxy)
     if client is None or request.proxy:
         client = make_client(settings, proxy=proxy)
@@ -213,11 +214,22 @@ async def scrape_url(
             )
             kind = sniff_kind(fetched.content, fetched.content_type, fetched.url)
             reason = should_escalate(fetched.text or "", fetched.status_code) if kind == "html" else None
-            if reason and request.render == "auto":
-                fetched.warnings.append(f"upgraded_to_browser:{reason}")
+            if reason == "js_shell" and request.render == "auto":
+                fetched.warnings.append("upgraded_to_browser:js_shell")
                 browser_fetch = await _maybe_browser(request, settings, browser_mgr)
                 browser_fetch.warnings = [*fetched.warnings, *browser_fetch.warnings]
+                browser_fetch.tier = browser_fetch.tier or "playwright"
                 fetched = browser_fetch
+            elif reason == "challenge" and request.render == "auto":
+                fetched.warnings.append("challenge_detected")
+                fetched = await escalate_challenge(
+                    fetched,
+                    request=request,
+                    settings=settings,
+                    client=client,
+                    browser=browser_mgr,
+                    proxy=proxy,
+                )
         fetch_ms = int((time.perf_counter() - fetch_started) * 1000)
         kind = sniff_kind(fetched.content, fetched.content_type, fetched.url)
         if fetched.status_code >= 400 and not (fetched.text or fetched.content):
@@ -286,6 +298,7 @@ async def scrape_url(
             "extract_ms": extract_ms,
         }
         data = _apply_formats(data, request.formats or ["markdown"])
+        data.fetch_tier = getattr(fetched, "tier", None) or data.fetch_tier
         _note_block(data)
         if request.cache and settings.cache_enabled and "screenshot" not in request.formats:
             encoded = data.model_dump(mode="json")
@@ -316,8 +329,9 @@ def known_formats() -> set[str]:
 def _note_block(data: ScrapeData) -> None:
     if data.block_reason:
         return
-    if "challenge_unresolved" in data.warnings or is_challenge(data.markdown or "", data.status_code or 200):
-        data.block_reason = "challenge"
+    vendor = challenge_vendor(data.markdown or "", data.status_code or 200)
+    if vendor or "challenge_unresolved" in data.warnings:
+        data.block_reason = vendor or "challenge"
 
 
 async def _from_adapter(request: ScrapeRequest, *, settings: Settings, client: httpx.AsyncClient) -> ScrapeData | None:
@@ -328,7 +342,10 @@ async def _from_adapter(request: ScrapeRequest, *, settings: Settings, client: h
     if interactive and getattr(adapter, "name", "") != "reddit":
         return None
     try:
-        return await fetch_via_adapter(request, settings=settings, client=client)
+        adapted = await fetch_via_adapter(request, settings=settings, client=client)
+        if adapted is not None:
+            adapted.fetch_tier = adapted.fetch_tier or "api"
+        return adapted
     except DungScraperError as exc:
         if str(getattr(adapter, "name", "")) == "reddit" or exc.code.startswith("reddit_"):
             raise

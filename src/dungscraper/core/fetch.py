@@ -33,6 +33,7 @@ class RawFetch:
     render_mode: str
     screenshot: bytes | None = None
     warnings: list[str] = field(default_factory=list)
+    tier: str = "http"
 
 
 def merge_headers(settings: Settings, extra: dict[str, str]) -> dict[str, str]:
@@ -190,6 +191,36 @@ def _playwright_proxy(proxy: str | None) -> dict | None:
     if parts.password:
         settings["password"] = parts.password
     return settings
+
+
+class StickyProxies:
+    """One proxy per site for the life of the process. New sites take the next proxy."""
+
+    def __init__(self, proxies: list[str]) -> None:
+        self.proxies = [proxy for proxy in proxies if proxy]
+        self._by_domain: dict[str, str] = {}
+        self._index = 0
+
+    def for_domain(self, domain: str) -> str | None:
+        if not self.proxies:
+            return None
+        key = (domain or "").lower()
+        if key not in self._by_domain:
+            self._by_domain[key] = self.proxies[self._index % len(self.proxies)]
+            self._index += 1
+        return self._by_domain[key]
+
+
+_sticky: dict[tuple[str, ...], StickyProxies] = {}
+
+
+def sticky_proxies(settings: Settings) -> StickyProxies:
+    key = tuple(settings.proxy_list)
+    pool = _sticky.get(key)
+    if pool is None:
+        pool = StickyProxies(list(key))
+        _sticky[key] = pool
+    return pool
 
 
 class ProxyRotator:

@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     allow_private_networks: bool = False
     proxy_url: str = ""
     proxy_urls: str = ""
+    proxies: str = ""
+    fetch_tiers: str = ""
+    flaresolverr_url: str = ""
+    solve_captcha: bool = False
     mcp_max_chars: int = 12_000
     llm_base_url: str = "https://api.openai.com/v1"
     llm_api_key: str = ""
@@ -80,11 +84,18 @@ class Settings(BaseSettings):
     @property
     def proxy_list(self) -> list[str]:
         found: list[str] = []
-        for part in (self.proxy_url, *self.proxy_urls.split(",")):
+        for part in (self.proxy_url, *self.proxy_urls.split(","), *self.proxies.split(",")):
             value = part.strip()
             if value and value not in found:
                 found.append(value)
         return found
+
+    def tier_order(self) -> list[str]:
+        default = ["http", "curl", "patchright", "camoufox", "flaresolverr", "seleniumbase"]
+        if not self.fetch_tiers.strip():
+            return default
+        chosen = [part.strip().lower() for part in self.fetch_tiers.split(",") if part.strip()]
+        return chosen or default
 
 
 @lru_cache

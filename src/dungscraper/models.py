@@ -152,6 +152,7 @@ class ScrapeData(BaseModel):
     timings_ms: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     block_reason: str | None = None
+    fetch_tier: str | None = None
 
 
 class ErrorBody(BaseModel):

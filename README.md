@@ -302,7 +302,44 @@ Twenty URLs (news, docs, a SPA, e-commerce, Q&A, Reddit, Medium), same rule both
 
 The page that moved in the second round was the Stack Overflow question on `yield`: a 4-word "Just a moment" interstitial became about 16,000 words that include the answer. AP News and Medium stayed on a challenge page. Reuters and both Reddit URLs were refused because their robots.txt disallows `DungScraperBot`.
 
-The third round, measured again on the same 20 URLs, stayed **15/20**. Wikipedia, GitHub, Hacker News, and arXiv now come from their public APIs (`render_mode` `api`) and are shorter, cleaner documents. Reddit no longer fails as a robots error: with no app credentials it returns `reddit_not_configured` and does not fetch HTML. Reuters is still a robots refusal. AP News and Medium still stop on a security check. A later pass strips a leading Stack Overflow signup or topic picker and CNN's feedback prompt when a real heading follows; that does not change the 15/20 count, because those two pages were already long enough to count.
+The third round stayed **15/20**. Wikipedia, GitHub, Hacker News, and arXiv come from their public APIs. Reddit with no app credentials returns `reddit_not_configured` and does not fetch HTML. Reuters is still a robots refusal. AP News and Medium still stop on a security check.
+
+Round 4 added the free challenge ladder and measured the same set again (`benchmark/hard-round4.json`): still **15/20** from this VPS. curl_cffi ran on the Cloudflare pages and was still blocked. Patchright, Camoufox, and a Byparr sidecar were not installed here, so the browser step was the bundled Playwright fallback. AP News and Medium remain challenge pages. Stack Overflow's markdown in that run opens on the question title. A residential or home IP, plus `pip install 'dungscraper[stealth]'` or Byparr, is the setup this ladder is meant for. It will not reliably beat an interactive image captcha.
+
+## Free anti-bot stack
+
+`render=auto` stays on plain HTTP until the response is a challenge page (Cloudflare, DataDome, Akamai, PerimeterX, or a short 403/429 shell). Only then does it climb:
+
+1. `http` — httpx
+2. `curl` — [curl_cffi](https://github.com/lexiforest/curl_cffi) Chrome TLS and HTTP/2 impersonation
+3. `patchright` — stealth Chromium. If it is not installed, the bundled Playwright browser is used and the response says `tier_unavailable:patchright`
+4. `camoufox` — Firefox, optional
+5. `flaresolverr` — a Byparr or FlareSolverr sidecar, only when `DUNGSCRAPER_FLARESOLVERR_URL` is set. Clearance cookies and the matching user agent are reused for later curl_cffi requests to that domain
+6. `seleniumbase` — Turnstile checkbox via `solve_captcha()`, only when `DUNGSCRAPER_SOLVE_CAPTCHA=true`
+
+JavaScript shells that are not block pages, such as `quotes.toscrape.com/js/`, still go straight to the browser. They do not run this ladder. `render=http` never escalates. The tier that returned the page is `fetch_tier`. A page that is still a challenge sets `block_reason` to the vendor name.
+
+```bash
+pip install 'dungscraper[stealth]'
+python -m patchright install chromium
+```
+
+`curl_cffi` is enough for the second tier. Patchright, Camoufox, and SeleniumBase are the heavy extras. A missing package skips that tier with `tier_unavailable` instead of crashing the scrape.
+
+Byparr speaks the FlareSolverr `/v1` API and is free:
+
+```bash
+docker compose --profile antibot up
+export DUNGSCRAPER_FLARESOLVERR_URL=http://127.0.0.1:8191/v1
+```
+
+Inside Compose the sidecar is `http://byparr:8191/v1`. Leave the variable empty to skip it.
+
+`DUNGSCRAPER_PROXIES` is an optional comma-separated list you supply. Each site sticks to one proxy for the process. The default is a direct connection from whatever IP the process uses. DungScraper does not ship a proxy list or Tor.
+
+Medium articles, profiles, and tags that come back as a challenge fall back to the public RSS feed (`/feed/@author`, `/feed/publication`, `/feed/tag/name`). Other sites are checked for `<link rel="alternate" type="application/rss+xml">`.
+
+Limits, plainly: no free tool reliably solves an interactive image captcha. Clearance cookies are tied to the egress IP that minted them, so a datacenter or VPS address is blocked far more often than a home connection. Some sites' terms forbid this. `robots.txt` stays on, and Reddit still uses only the official API.
 
 ## Tests
 
@@ -314,7 +351,7 @@ Unit tests cover extraction, chunking, simhash, robots, sitemaps, SSRF checks, s
 
 ## Known gaps
 
-- Managed challenges still win on some hosts. A response that is still an interstitial sets `block_reason` to `challenge`. There is no captcha vendor.
+- Managed challenges still win on many datacenter IPs. The free ladder (curl_cffi, Patchright, Camoufox, Byparr, opt-in SeleniumBase) does not reliably solve interactive image captchas. A response that is still an interstitial sets `block_reason` to the vendor name. It works better from a home IP than from a VPS.
 - Sites that disallow `DungScraperBot` in robots.txt are not fetched, except where a separate official API is configured. Reddit HTML is never the fallback. Reuters stays blocked unless its robots.txt allows the bot. `respect_robots: false` is for a site you are allowed to read, not a default.
 - Signup walls and ad prompts can sit in front of real copy. Stack Overflow's answer is in the markdown, under a signup form. CNN's scrape opens on a feedback prompt.
 - Search still depends on a provider. With no Brave, Serper, or SearXNG key, DuckDuckGo is the only option, and it can rate-limit this host.

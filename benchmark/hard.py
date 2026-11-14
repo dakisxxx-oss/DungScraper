@@ -100,6 +100,8 @@ async def main() -> None:
                             "ms": int((time.perf_counter() - started) * 1000),
                             "title": data.metadata.title if data.metadata else None,
                             "warnings": data.warnings,
+                            "tier": data.fetch_tier,
+                            "block_reason": data.block_reason,
                             "sample": sample.replace("\n", " ")[:180],
                         }
                     )
