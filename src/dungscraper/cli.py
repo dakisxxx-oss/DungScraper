@@ -4,15 +4,54 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Optional
 
 import typer
+from pydantic import ValidationError
 
 from dungscraper.client import DungScraper
-from dungscraper.errors import DungScraperAPIError, DungScraperError
+from dungscraper.errors import DungScraperError
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="DungScraper scrapes and crawls the web for agents.")
+
+
+LONG_RUNNING = {"serve", "worker", "mcp"}
+
+
+def ensure_utf8_streams() -> None:
+    """Windows consoles and pipes default to a legacy code page. Print Unicode safely."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
+    stdin_reconfigure = getattr(sys.stdin, "reconfigure", None)
+    if stdin_reconfigure is not None:
+        try:
+            stdin_reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@app.callback()
+def _root(
+    ctx: typer.Context,
+    log_level: Optional[str] = typer.Option(
+        None,
+        "--log-level",
+        help="DEBUG, INFO, WARNING, or ERROR. CLI commands default to WARNING. Same as DUNGSCRAPER_LOG_LEVEL.",
+    ),
+) -> None:
+    # Settings are read once, so the level has to be in the environment before any command runs.
+    if log_level:
+        os.environ["DUNGSCRAPER_LOG_LEVEL"] = log_level.upper()
+    elif ctx.invoked_subcommand not in LONG_RUNNING:
+        os.environ.setdefault("DUNGSCRAPER_LOG_LEVEL", "WARNING")
 
 
 def _echo_error(exc: Exception) -> None:
@@ -20,12 +59,16 @@ def _echo_error(exc: Exception) -> None:
     raise typer.Exit(code=1)
 
 
+def _dump(data) -> str:
+    return json.dumps(data, indent=2, default=str, ensure_ascii=False)
+
+
 def _print(data, as_json: bool, markdown_key: str | None = None) -> None:
     if as_json or markdown_key is None:
-        typer.echo(json.dumps(data, indent=2, default=str))
+        typer.echo(_dump(data))
         return
     text = data.get(markdown_key) if isinstance(data, dict) else None
-    typer.echo(text if text else json.dumps(data, indent=2, default=str))
+    typer.echo(text if text else _dump(data))
 
 
 def _client(base_url: Optional[str], api_key: Optional[str]) -> DungScraper:
@@ -123,7 +166,7 @@ def scrape(
             with _client(base_url, api_key) as client:
                 data = client.scrape(url, render=render)
         _print(data, as_json, "markdown")
-    except (DungScraperAPIError, DungScraperError) as exc:
+    except DungScraperError as exc:
         _echo_error(exc)
 
 
@@ -140,8 +183,8 @@ def crawl(
     try:
         with _client(base_url, api_key) as client:
             data = client.crawl(url, limit=limit, max_depth=max_depth, wait=wait)
-        typer.echo(json.dumps(data, indent=2, default=str))
-    except DungScraperAPIError as exc:
+        typer.echo(_dump(data))
+    except DungScraperError as exc:
         _echo_error(exc)
 
 
@@ -155,8 +198,8 @@ def crawl_status(
     try:
         with _client(base_url, api_key) as client:
             data = client.crawl_status(job_id)
-        typer.echo(json.dumps(data, indent=2, default=str))
-    except DungScraperAPIError as exc:
+        typer.echo(_dump(data))
+    except DungScraperError as exc:
         _echo_error(exc)
 
 
@@ -174,7 +217,7 @@ def map_command(
             data = client.map(url, search=search, limit=limit)
         for link in data.get("links") or []:
             typer.echo(link["url"])
-    except DungScraperAPIError as exc:
+    except DungScraperError as exc:
         _echo_error(exc)
 
 
@@ -191,8 +234,8 @@ def search(
     try:
         with _client(base_url, api_key) as client:
             data = client.search(query, limit=limit, provider=provider, scrape=scrape_results)
-        typer.echo(json.dumps(data, indent=2, default=str))
-    except DungScraperAPIError as exc:
+        typer.echo(_dump(data))
+    except DungScraperError as exc:
         _echo_error(exc)
 
 
@@ -207,12 +250,15 @@ def extract(
     """Extract JSON from a page. Needs an OpenAI-compatible model configured on the server."""
     schema = None
     if schema_path:
-        schema = json.loads(open(schema_path, encoding="utf-8").read())
+        try:
+            schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _echo_error(DungScraperError("invalid_schema", f"Could not read schema file {schema_path}: {exc}"))
     try:
         with _client(base_url, api_key) as client:
             data = client.extract(url=url, prompt=prompt or None, schema=schema)
-        typer.echo(json.dumps(data, indent=2, default=str))
-    except DungScraperAPIError as exc:
+        typer.echo(_dump(data))
+    except DungScraperError as exc:
         _echo_error(exc)
 
 
@@ -223,13 +269,14 @@ def chunk(
     overlap_tokens: int = typer.Option(50),
 ) -> None:
     """Chunk a Markdown file for retrieval. Runs locally, no server required."""
-    import sys
-
     from dungscraper.core.chunk import chunk_markdown
 
-    text = open(path, encoding="utf-8").read() if path else sys.stdin.read()
+    try:
+        text = Path(path).read_text(encoding="utf-8") if path else sys.stdin.read()
+    except OSError as exc:
+        _echo_error(DungScraperError("file_error", f"Could not read {path}: {exc}"))
     chunks = chunk_markdown(text, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
-    typer.echo(json.dumps([item.model_dump() for item in chunks], indent=2))
+    typer.echo(_dump([item.model_dump() for item in chunks]))
 
 
 async def _local_scrape(url: str, render: str) -> dict:
@@ -254,4 +301,17 @@ async def _local_scrape(url: str, render: str) -> dict:
 
 
 def main() -> None:
-    app()
+    ensure_utf8_streams()
+    try:
+        app()
+    except Exception as exc:  # noqa: BLE001
+        if os.environ.get("DUNGSCRAPER_DEBUG"):
+            raise
+        if isinstance(exc, ValidationError):
+            problems = "; ".join(
+                f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}" for item in exc.errors()
+            )
+            typer.echo(f"error: invalid input. {problems}", err=True)
+        else:
+            typer.echo(f"error: {type(exc).__name__}: {exc}", err=True)
+        sys.exit(1)

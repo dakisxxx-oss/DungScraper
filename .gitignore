@@ -12,3 +12,4 @@ build/
 .env
 .playwright/
 ms-playwright/
+*.log
