@@ -14,6 +14,8 @@ from pydantic import ValidationError
 
 from dungscraper.client import DungScraper
 from dungscraper.errors import DungScraperError
+from dungscraper.local import local_crawl, local_map, local_scrape, local_search
+from dungscraper.models import CrawlRequest, MapRequest, SearchRequest
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="DungScraper scrapes and crawls the web for agents.")
 
@@ -161,7 +163,7 @@ def scrape(
     """Scrape one URL and print Markdown."""
     try:
         if local:
-            data = asyncio.run(_local_scrape(url, render))
+            data = asyncio.run(local_scrape(url, render))
         else:
             with _client(base_url, api_key) as client:
                 data = client.scrape(url, render=render)
@@ -176,13 +178,17 @@ def crawl(
     limit: int = typer.Option(10),
     max_depth: int = typer.Option(2),
     wait: bool = typer.Option(True),
+    local: bool = typer.Option(False, help="Crawl in this process instead of calling the API. Always waits."),
     base_url: Optional[str] = typer.Option(None),
     api_key: Optional[str] = typer.Option(None),
 ) -> None:
     """Start a crawl. Prints the job, including pages when --wait is set."""
     try:
-        with _client(base_url, api_key) as client:
-            data = client.crawl(url, limit=limit, max_depth=max_depth, wait=wait)
+        if local:
+            data = asyncio.run(local_crawl(CrawlRequest(url=url, limit=limit, max_depth=max_depth, wait=True)))
+        else:
+            with _client(base_url, api_key) as client:
+                data = client.crawl(url, limit=limit, max_depth=max_depth, wait=wait)
         typer.echo(_dump(data))
     except DungScraperError as exc:
         _echo_error(exc)
@@ -208,15 +214,22 @@ def map_command(
     url: str,
     search: Optional[str] = typer.Option(None),
     limit: int = typer.Option(100),
+    local: bool = typer.Option(False, help="Map in this process instead of calling the API."),
     base_url: Optional[str] = typer.Option(None),
     api_key: Optional[str] = typer.Option(None),
 ) -> None:
     """List URLs discovered on a site."""
     try:
-        with _client(base_url, api_key) as client:
-            data = client.map(url, search=search, limit=limit)
-        for link in data.get("links") or []:
+        if local:
+            data = asyncio.run(local_map(MapRequest(url=url, search=search, limit=limit)))
+        else:
+            with _client(base_url, api_key) as client:
+                data = client.map(url, search=search, limit=limit)
+        links = data.get("links") or []
+        for link in links:
             typer.echo(link["url"])
+        if not links:
+            typer.echo("No URLs found.", err=True)
     except DungScraperError as exc:
         _echo_error(exc)
 
@@ -227,13 +240,19 @@ def search(
     limit: int = typer.Option(5),
     provider: str = typer.Option("auto"),
     scrape_results: bool = typer.Option(True, "--scrape/--no-scrape"),
+    local: bool = typer.Option(False, help="Search in this process instead of calling the API."),
     base_url: Optional[str] = typer.Option(None),
     api_key: Optional[str] = typer.Option(None),
 ) -> None:
     """Search and print the hits."""
     try:
-        with _client(base_url, api_key) as client:
-            data = client.search(query, limit=limit, provider=provider, scrape=scrape_results)
+        if local:
+            data = asyncio.run(
+                local_search(SearchRequest(query=query, limit=limit, provider=provider, scrape=scrape_results))
+            )
+        else:
+            with _client(base_url, api_key) as client:
+                data = client.search(query, limit=limit, provider=provider, scrape=scrape_results)
         typer.echo(_dump(data))
     except DungScraperError as exc:
         _echo_error(exc)
@@ -277,27 +296,6 @@ def chunk(
         _echo_error(DungScraperError("file_error", f"Could not read {path}: {exc}"))
     chunks = chunk_markdown(text, max_tokens=max_tokens, overlap_tokens=overlap_tokens)
     typer.echo(_dump([item.model_dump() for item in chunks]))
-
-
-async def _local_scrape(url: str, render: str) -> dict:
-    from dungscraper.config import get_settings
-    from dungscraper.core.scrape import scrape_url
-    from dungscraper.models import ScrapeRequest
-    from dungscraper.services import shutdown, startup
-
-    settings = get_settings()
-    services = await startup(settings)
-    try:
-        data = await scrape_url(
-            ScrapeRequest(url=url, render=render),
-            settings=settings,
-            client=services.client,
-            cache=services.cache,
-            browser=services.browser,
-        )
-        return data.model_dump(mode="json")
-    finally:
-        await shutdown(services)
 
 
 def main() -> None:
