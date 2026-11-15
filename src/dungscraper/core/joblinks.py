@@ -184,9 +184,10 @@ def _inline_listings(soup: BeautifulSoup, base_url: str, limit: int) -> list[Job
                 if match:
                     apply_email = match.group(0).lower()
                     break
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:80]
         found.append(
             JobLink(
-                url=base_url,
+                url=f"{base_url}#{slug}" if slug else base_url,
                 title=title,
                 reason="inline:collapsed section",
                 tags=_tags(f"{title} {body[:1500]}"),

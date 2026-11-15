@@ -24,7 +24,7 @@ cd DungScraper
 
 On macOS or Linux run `./install.sh` instead of `.\install.ps1`. Add `-NoBrowser` (Windows) or `--no-browser` (macOS, Linux) to skip the 150 MB Chromium download; plain HTTP scraping still works, JavaScript-only pages do not. The installers are safe to run again. If PowerShell blocks the script, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
 
-Other ways: `pip install git+https://github.com/dakisxxx-oss/DungScraper.git` then `python -m playwright install chromium`, or Docker (below). `dungscraper install-claude` is optional and adds the tools to Claude Desktop ([INSTALL_CLAUDE.md](INSTALL_CLAUDE.md)).
+Other ways: `pip install git+https://github.com/dakisxxx-oss/DungScraper.git`, then `python -m playwright install chromium`, or Docker (below). `dungscraper install-claude` is optional and adds the tools to Claude Desktop ([INSTALL_CLAUDE.md](INSTALL_CLAUDE.md)).
 
 ## Use it
 
@@ -44,6 +44,14 @@ Other ways: `pip install git+https://github.com/dakisxxx-oss/DungScraper.git` th
 `contacts <url>` collects **public business** email addresses and careers links from a page, and with `--depth 1` (default) also from the contact, imprint, careers and about pages it links to. It reads `mailto:` links, visible text, schema.org JSON-LD, Cloudflare-protected links, and simple forms like `name [at] host [dot] com`. Each email comes with the page URL and a text snippet where it was found, a rough kind (`jobs`, `general`, `sales`, `support`, `press`, `legal`, `other`), and whether it matches the site's domain. Image names such as `logo@2x.png`, placeholders such as `you@example.com`, error-tracker keys and `noreply` addresses are dropped. robots.txt is respected. API: `POST /v1/contacts`.
 
 `jobs <url>` lists links on a careers page that look like single job postings (JSON-LD `JobPosting`, job-board hosts such as Greenhouse, Lever or Workable, `/jobs/<slug>` paths, apply links). Entries get `junior` and `remote` tags when the text says so. Pages that list roles as collapsed sections with an apply-by-email address are reported with `apply_email`. API: `POST /v1/jobs`.
+
+Output and checks (0.2.0):
+
+- `--format compact` prints one email or one job per line. `--format csv` prints a header and one row per item. The default `json` is the full result.
+- `contacts --check-mx` looks up whether each email domain has a mail server and sets `mx` to `true`, `false` or `null` (unknown). It makes one DNS lookup per domain.
+- `jobs --render browser` loads the page in Chromium first. Use it for career pages that fill in their jobs with JavaScript.
+- Roles listed as collapsed sections get their own link, `<page>#<role-name>`, so each row is distinct.
+- Both are MCP tools too: `find_contacts_tool` and `find_jobs_tool`.
 
 Use these for public company information only. See [SECURITY.md](SECURITY.md) for responsible use.
 

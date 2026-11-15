@@ -454,10 +454,17 @@ async def find_contacts(
         if depth > request.depth:
             break
 
+    emails = collector.sorted_emails()
+    if request.check_mx and emails:
+        from dungscraper.core.mx import check_domains
+
+        verdicts = await check_domains({item.email.rsplit("@", 1)[-1] for item in emails})
+        for item in emails:
+            item.mx = verdicts.get(item.email.rsplit("@", 1)[-1])
     return ContactsData(
         url=root,
         domain=root_host,
-        emails=collector.sorted_emails(),
+        emails=emails,
         career_links=list(collector.careers.values()),
         pages=pages,
         pages_scanned=len(pages),

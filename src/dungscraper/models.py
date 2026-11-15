@@ -483,6 +483,11 @@ class ContactsRequest(BaseModel):
     timeout_ms: int | None = Field(
         None, ge=1000, le=180_000, validation_alias=AliasChoices("timeout_ms", "timeout")
     )
+    check_mx: bool = Field(
+        False,
+        validation_alias=AliasChoices("check_mx", "checkMx"),
+        description="Look up whether each email domain has a mail server (adds a DNS lookup per domain).",
+    )
 
     @field_validator("url")
     @classmethod
@@ -500,6 +505,7 @@ class ContactEmail(BaseModel):
     email: str
     kind: str = "other"
     same_domain: bool = False
+    mx: bool | None = None
     found_at: list[EmailLocation] = Field(default_factory=list)
 
 

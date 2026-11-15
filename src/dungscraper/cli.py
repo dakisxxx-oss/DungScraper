@@ -65,6 +65,51 @@ def _dump(data) -> str:
     return json.dumps(data, indent=2, default=str, ensure_ascii=False)
 
 
+def _csv_line(values: list[str]) -> str:
+    import csv
+    import io
+
+    buffer = io.StringIO()
+    csv.writer(buffer, lineterminator="").writerow(values)
+    return buffer.getvalue()
+
+
+def format_contacts(data: dict, fmt: str) -> str:
+    """json is the full result. compact is one email per line. csv is a header plus one row per email."""
+    if fmt == "json":
+        return _dump(data)
+    rows = []
+    for item in data.get("emails", []):
+        where = (item.get("found_at") or [{}])[0].get("url", "")
+        mx = item.get("mx")
+        rows.append([item["email"], item.get("kind", ""), "" if mx is None else str(mx).lower(), where])
+    if fmt == "csv":
+        lines = [_csv_line(["email", "kind", "mx", "found_at"])] + [_csv_line(r) for r in rows]
+        return "\n".join(lines)
+    return "\n".join("  ".join(part for part in row if part) for row in rows)
+
+
+def format_jobs(data: dict, fmt: str) -> str:
+    """json is the full result. compact is one job per line. csv is a header plus one row per job."""
+    if fmt == "json":
+        return _dump(data)
+    rows = []
+    for item in data.get("jobs", []):
+        rows.append(
+            [item.get("title", ""), item["url"], ",".join(item.get("tags", [])), item.get("apply_email") or ""]
+        )
+    if fmt == "csv":
+        lines = [_csv_line(["title", "url", "tags", "apply_email"])] + [_csv_line(r) for r in rows]
+        return "\n".join(lines)
+    return "\n".join("  ".join(part for part in row if part) for row in rows)
+
+
+def _check_format(fmt: str) -> str:
+    if fmt not in ("json", "compact", "csv"):
+        raise typer.BadParameter("format must be json, compact or csv")
+    return fmt
+
+
 def _print(data, as_json: bool, markdown_key: str | None = None) -> None:
     if as_json or markdown_key is None:
         typer.echo(_dump(data))
@@ -264,18 +309,25 @@ def contacts(
     depth: int = typer.Option(1, min=0, max=3, help="0 reads only this page. 1 also reads contact, imprint, careers and about pages it links to."),
     limit: int = typer.Option(8, min=1, max=30, help="Most pages to read."),
     render: str = typer.Option("auto"),
+    check_mx: bool = typer.Option(False, "--check-mx", help="Look up whether each email domain has a mail server."),
+    fmt: str = typer.Option("json", "--format", help="json (full), compact (one email per line) or csv."),
     local: bool = typer.Option(False, help="Run in this process instead of calling the API."),
     base_url: Optional[str] = typer.Option(None),
     api_key: Optional[str] = typer.Option(None),
 ) -> None:
-    """Find public business emails and careers links. Prints JSON with where each email was found."""
+    """Find public business emails and careers links. Default output is JSON with where each email was found."""
+    fmt = _check_format(fmt)
     try:
         if local:
-            data = asyncio.run(local_contacts(ContactsRequest(url=url, depth=depth, limit=limit, render=render)))
+            data = asyncio.run(
+                local_contacts(
+                    ContactsRequest(url=url, depth=depth, limit=limit, render=render, check_mx=check_mx)
+                )
+            )
         else:
             with _client(base_url, api_key) as client:
-                data = client.contacts(url, depth=depth, limit=limit, render=render)
-        typer.echo(_dump(data))
+                data = client.contacts(url, depth=depth, limit=limit, render=render, check_mx=check_mx)
+        typer.echo(format_contacts(data, fmt))
     except DungScraperError as exc:
         _echo_error(exc)
 
@@ -284,19 +336,21 @@ def contacts(
 def jobs(
     url: str,
     limit: int = typer.Option(100, min=1, max=500),
-    render: str = typer.Option("auto"),
+    render: str = typer.Option("auto", help="auto, http or browser. Use browser for pages that load jobs with JavaScript."),
+    fmt: str = typer.Option("json", "--format", help="json (full), compact (one job per line) or csv."),
     local: bool = typer.Option(False, help="Run in this process instead of calling the API."),
     base_url: Optional[str] = typer.Option(None),
     api_key: Optional[str] = typer.Option(None),
 ) -> None:
     """List links to job postings on a careers page. Tags junior and remote hints."""
+    fmt = _check_format(fmt)
     try:
         if local:
             data = asyncio.run(local_jobs(JobsRequest(url=url, limit=limit, render=render)))
         else:
             with _client(base_url, api_key) as client:
                 data = client.jobs(url, limit=limit, render=render)
-        typer.echo(_dump(data))
+        typer.echo(format_jobs(data, fmt))
     except DungScraperError as exc:
         _echo_error(exc)
 
