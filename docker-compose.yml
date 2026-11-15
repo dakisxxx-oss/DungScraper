@@ -8,7 +8,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "8741:8741"
+      - "127.0.0.1:8741:8741"
     environment: &dungscraper_env
       DUNGSCRAPER_REDIS_URL: redis://redis:6379/0
       DUNGSCRAPER_API_KEYS: ${DUNGSCRAPER_API_KEYS:-dungscraper-dev-key}

@@ -21,7 +21,7 @@ DEFAULT_FETCH_UA = (
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DUNGSCRAPER_", env_file=".env", extra="ignore")
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8741
     api_keys: str = ""
     api_key: str = ""

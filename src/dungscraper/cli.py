@@ -79,7 +79,7 @@ def _client(base_url: Optional[str], api_key: Optional[str]) -> DungScraper:
 
 @app.command()
 def serve(
-    host: Optional[str] = typer.Option(None, help="Bind host. Defaults to DUNGSCRAPER_HOST or 0.0.0.0."),
+    host: Optional[str] = typer.Option(None, help="Bind host. Defaults to DUNGSCRAPER_HOST or 127.0.0.1 (this computer only)."),
     port: Optional[int] = typer.Option(None, help="Bind port. Defaults to DUNGSCRAPER_PORT or 8741."),
     reload: bool = typer.Option(False, help="Reload on code changes."),
 ) -> None:

@@ -5,7 +5,7 @@
 1. Atidarykite **PowerShell**. Klonuokite repozitoriją į namų aplanką:
 
    ```powershell
-   git clone https://github.com/darius-ra-auskas/DungScraper.git $env:USERPROFILE\DungScraper
+   git clone https://github.com/dakisxxx-oss/DungScraper.git $env:USERPROFILE\DungScraper
    cd $env:USERPROFILE\DungScraper
    ```
 
@@ -36,7 +36,7 @@ Follow these steps in order. They are written so a person or Claude Desktop can 
 ### 1. Clone into your user profile
 
 ```powershell
-git clone https://github.com/darius-ra-auskas/DungScraper.git $env:USERPROFILE\DungScraper
+git clone https://github.com/dakisxxx-oss/DungScraper.git $env:USERPROFILE\DungScraper
 cd $env:USERPROFILE\DungScraper
 ```
 
