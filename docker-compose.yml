@@ -1,0 +1,57 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  dungscraper:
+    image: dungscraper
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8741:8741"
+    environment: &dungscraper_env
+      DUNGSCRAPER_REDIS_URL: redis://redis:6379/0
+      DUNGSCRAPER_API_KEYS: ${DUNGSCRAPER_API_KEYS:-dungscraper-dev-key}
+      DUNGSCRAPER_CRAWL_MODE: queue
+      DUNGSCRAPER_ALLOW_PRIVATE_NETWORKS: ${DUNGSCRAPER_ALLOW_PRIVATE_NETWORKS:-false}
+      DUNGSCRAPER_LLM_BASE_URL: ${DUNGSCRAPER_LLM_BASE_URL:-https://api.openai.com/v1}
+      DUNGSCRAPER_LLM_API_KEY: ${DUNGSCRAPER_LLM_API_KEY:-}
+      DUNGSCRAPER_LLM_MODEL: ${DUNGSCRAPER_LLM_MODEL:-gpt-4o-mini}
+      DUNGSCRAPER_BRAVE_API_KEY: ${DUNGSCRAPER_BRAVE_API_KEY:-}
+      DUNGSCRAPER_SERPER_API_KEY: ${DUNGSCRAPER_SERPER_API_KEY:-}
+      DUNGSCRAPER_SEARXNG_URL: ${DUNGSCRAPER_SEARXNG_URL:-}
+      DUNGSCRAPER_LOG_JSON: "true"
+      DUNGSCRAPER_FLARESOLVERR_URL: ${DUNGSCRAPER_FLARESOLVERR_URL:-}
+    depends_on:
+      - redis
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8741/health', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 25s
+
+  dungscraper-worker:
+    image: dungscraper
+    build: .
+    restart: unless-stopped
+    command: ["dungscraper", "worker"]
+    environment: *dungscraper_env
+    depends_on:
+      - redis
+
+  # Free Cloudflare clearance sidecar. Same /v1 API as FlareSolverr.
+  # docker compose --profile antibot up
+  # DUNGSCRAPER_FLARESOLVERR_URL=http://byparr:8191/v1
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest
+    profiles: ["antibot"]
+    restart: unless-stopped
+    ports:
+      - "8191:8191"

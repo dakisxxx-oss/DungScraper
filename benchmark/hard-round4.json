@@ -1,0 +1,290 @@
+{
+  "label": "round4",
+  "success": 15,
+  "total": 20,
+  "rows": [
+    {
+      "url": "https://example.com",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 28,
+      "ms": 225,
+      "title": "Example Domain",
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# Example Domain  This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes."
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+      "success": true,
+      "status": 200,
+      "render": "api",
+      "words": 12740,
+      "ms": 2621,
+      "title": "Python (programming language)",
+      "warnings": [
+        "wikipedia_api"
+      ],
+      "tier": "api",
+      "block_reason": null,
+      "sample": "# Python (programming language)  **Python** is a [high-level](https://en.wikipedia.org/High-level_programming_language), [general-purpose programming language](https://en.wikipedia"
+    },
+    {
+      "url": "https://docs.python.org/3/library/asyncio.html",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 338,
+      "ms": 191,
+      "title": "asyncio \u2014 Asynchronous I/O",
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# ``` asyncio ``` \u2014 Asynchronous I/O[\u00b6](https://docs.python.org#module-asyncio)  asyncio is a library to write **concurrent** code using the **async/await** syntax.  asyncio is use"
+    },
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTML",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1197,
+      "ms": 350,
+      "title": "HTML: HyperText Markup Language | MDN",
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# HTML: HyperText Markup Language  **HTML** (HyperText Markup Language) is the most basic building block of the Web. It defines the meaning and structure of web content. Other tech"
+    },
+    {
+      "url": "https://github.com/microsoft/playwright",
+      "success": true,
+      "status": 200,
+      "render": "api",
+      "words": 1231,
+      "ms": 264,
+      "title": "microsoft/playwright",
+      "warnings": [
+        "github_api"
+      ],
+      "tier": "api",
+      "block_reason": null,
+      "sample": "# microsoft/playwright  Playwright is a framework for Web Testing and Automation. It allows testing Chromium, Firefox and WebKit with a single API.   # \ud83c\udfad Playwright  [![npm version"
+    },
+    {
+      "url": "https://news.ycombinator.com/",
+      "success": true,
+      "status": 200,
+      "render": "api",
+      "words": 441,
+      "ms": 1091,
+      "title": "Hacker News",
+      "warnings": [
+        "hackernews_api"
+      ],
+      "tier": "api",
+      "block_reason": null,
+      "sample": "# Hacker News  - [Lovable apps expose passport details and more than 200K private messages](https://www.crissyfield.de/research/lovable-en/) \u00b7 580 points \u00b7 armcat - [L3Harris State"
+    },
+    {
+      "url": "https://stackoverflow.com/questions/231767/what-does-the-yield-keyword-do",
+      "success": true,
+      "status": 403,
+      "render": "browser",
+      "words": 15801,
+      "ms": 4979,
+      "title": "What does the \"yield\" keyword do in Python?",
+      "warnings": [
+        "http_status_403",
+        "challenge_detected",
+        "fetch_tier:curl",
+        "http_status_403",
+        "tier_unavailable:patchright",
+        "fetch_tier:patchright"
+      ],
+      "tier": "patchright",
+      "block_reason": null,
+      "sample": "# [What does the \"yield\" keyword do in Python?](https://stackoverflow.com/questions/231767/what-does-the-yield-keyword-do-in-python)  [Ask Question](https://stackoverflow.com/quest"
+    },
+    {
+      "url": "https://quotes.toscrape.com/js/",
+      "success": true,
+      "status": 200,
+      "render": "browser",
+      "words": 237,
+      "ms": 367,
+      "title": "Quotes to Scrape",
+      "warnings": [
+        "upgraded_to_browser:js_shell"
+      ],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# [Quotes to Scrape](https://quotes.toscrape.com/)  [Login](https://quotes.toscrape.com/login)  \u201cThe world as we have created it is a process of our thinking. It cannot be changed "
+    },
+    {
+      "url": "https://react.dev/learn",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 2611,
+      "ms": 699,
+      "title": "Quick Start \u2013 React",
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# Quick Start \u2013 React  Welcome to the React documentation! This page will give you an introduction to 80% of the React concepts that you will use on a daily basis.  ### You will le"
+    },
+    {
+      "url": "https://httpbin.org/html",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 606,
+      "ms": 38,
+      "title": null,
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# Herman Melville - Moby-Dick  Availing himself of the mild, summer-cool weather that now reigned in these latitudes, and in preparation for the peculiarly active pursuits shortly "
+    },
+    {
+      "url": "https://www.bbc.com/news",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1631,
+      "ms": 408,
+      "title": "BBC News - Breaking news, video and the latest top stories from the U.S. and around the world",
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# BBC News - Breaking news, video and the latest top stories from the U.S. and around the world  [Skip to content](#bbc-main)  [Watch Live](https://www.bbc.com/watch-live-news/)  S"
+    },
+    {
+      "url": "https://www.theguardian.com/world",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1764,
+      "ms": 519,
+      "title": "Latest news from around the world | The Guardian",
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# Latest news from around the world | The Guardian  [Skip to main content](#maincontent)[Skip to navigation](#navigation)  [Print subscriptions](https://support.theguardian.com/sub"
+    },
+    {
+      "url": "https://www.reuters.com/world/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 105,
+      "error": "robots_disallowed: https://www.reuters.com/world/ is disallowed by robots.txt for DungScraperBot/0.1. Pass respect_robots=false only for a site you are allowed to access."
+    },
+    {
+      "url": "https://apnews.com/",
+      "success": false,
+      "status": 403,
+      "render": "browser",
+      "words": 45,
+      "ms": 8219,
+      "title": "Just a moment...",
+      "warnings": [
+        "http_status_403",
+        "challenge_detected",
+        "fetch_tier:curl",
+        "http_status_403",
+        "challenge_unresolved",
+        "tier_unavailable:patchright",
+        "fetch_tier:patchright",
+        "tier_unavailable:camoufox"
+      ],
+      "tier": "patchright",
+      "block_reason": "cloudflare",
+      "sample": "# Just a moment...  ![Icon for apnews.com](https://apnews.com/favicon.ico)  # apnews.com  ## Performing security verification  This website uses a security service to protect again"
+    },
+    {
+      "url": "https://old.reddit.com/r/Python/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 5,
+      "error": "reddit_not_configured: Reddit is not configured, and DungScraper will not scrape reddit.com HTML. Reddit's robots.txt disallows that fetch. Use the official API instead: create a script app at https://ww"
+    },
+    {
+      "url": "https://www.reddit.com/r/Python/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 4,
+      "error": "reddit_not_configured: Reddit is not configured, and DungScraper will not scrape reddit.com HTML. Reddit's robots.txt disallows that fetch. Use the official API instead: create a script app at https://ww"
+    },
+    {
+      "url": "https://medium.com/",
+      "success": false,
+      "status": 403,
+      "render": "browser",
+      "words": 45,
+      "ms": 8462,
+      "title": "Just a moment...",
+      "warnings": [
+        "http_status_403",
+        "challenge_detected",
+        "fetch_tier:curl",
+        "http_status_403",
+        "challenge_unresolved",
+        "tier_unavailable:patchright",
+        "fetch_tier:patchright",
+        "tier_unavailable:camoufox"
+      ],
+      "tier": "patchright",
+      "block_reason": "cloudflare",
+      "sample": "# Just a moment...  ![Icon for medium.com](https://medium.com/favicon.ico)  # medium.com  ## Performing security verification  This website uses a security service to protect again"
+    },
+    {
+      "url": "https://arxiv.org/abs/1706.03762",
+      "success": true,
+      "status": 200,
+      "render": "api",
+      "words": 192,
+      "ms": 68,
+      "title": "Attention Is All You Need",
+      "warnings": [
+        "arxiv_api"
+      ],
+      "tier": "api",
+      "block_reason": null,
+      "sample": "# Attention Is All You Need  Authors: Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin Published: 2017-06-12"
+    },
+    {
+      "url": "https://www.amazon.com/s?k=kindle",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 2374,
+      "ms": 1900,
+      "title": "Amazon.com : kindle",
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "# Amazon.com : kindle  ![](https://fls-na.amazon.com/1/batch/1/OP/ATVPDKIKX0DER:146-1930749-4262910:A961GA3SRQ9A3JQW2798$uedata=s:%2Frd%2Fuedata%3Fstaticb%26id%3DA961GA3SRQ9A3JQW27"
+    },
+    {
+      "url": "https://edition.cnn.com/",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1820,
+      "ms": 1418,
+      "title": "Breaking News, Latest News and Videos | CNN",
+      "warnings": [],
+      "tier": "http",
+      "block_reason": null,
+      "sample": "## More top stories  - [![16x9_top card.jpg](https://media.cnn.com/api/v1/images/stellar/prod/16x9-top-card.jpg?c=16x9&q=h_438,w_780,c_fill)    Illustration by Leah Abucayan/CNN/Ge"
+    }
+  ]
+}

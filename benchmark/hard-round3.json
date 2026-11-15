@@ -1,0 +1,245 @@
+{
+  "label": "round3",
+  "success": 15,
+  "total": 20,
+  "rows": [
+    {
+      "url": "https://example.com",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 28,
+      "ms": 225,
+      "title": "Example Domain",
+      "warnings": [],
+      "sample": "# Example Domain  This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes."
+    },
+    {
+      "url": "https://en.wikipedia.org/wiki/Python_(programming_language)",
+      "success": true,
+      "status": 200,
+      "render": "api",
+      "words": 12740,
+      "ms": 3505,
+      "title": "Python (programming language)",
+      "warnings": [
+        "wikipedia_api"
+      ],
+      "sample": "# Python (programming language)  **Python** is a [high-level](https://en.wikipedia.org/High-level_programming_language), [general-purpose programming language](https://en.wikipedia"
+    },
+    {
+      "url": "https://docs.python.org/3/library/asyncio.html",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 338,
+      "ms": 252,
+      "title": "asyncio \u2014 Asynchronous I/O",
+      "warnings": [],
+      "sample": "# ``` asyncio ``` \u2014 Asynchronous I/O[\u00b6](https://docs.python.org#module-asyncio)  asyncio is a library to write **concurrent** code using the **async/await** syntax.  asyncio is use"
+    },
+    {
+      "url": "https://developer.mozilla.org/en-US/docs/Web/HTML",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1197,
+      "ms": 398,
+      "title": "HTML: HyperText Markup Language | MDN",
+      "warnings": [],
+      "sample": "# HTML: HyperText Markup Language  **HTML** (HyperText Markup Language) is the most basic building block of the Web. It defines the meaning and structure of web content. Other tech"
+    },
+    {
+      "url": "https://github.com/microsoft/playwright",
+      "success": true,
+      "status": 200,
+      "render": "api",
+      "words": 1231,
+      "ms": 249,
+      "title": "microsoft/playwright",
+      "warnings": [
+        "github_api"
+      ],
+      "sample": "# microsoft/playwright  Playwright is a framework for Web Testing and Automation. It allows testing Chromium, Firefox and WebKit with a single API.   # \ud83c\udfad Playwright  [![npm version"
+    },
+    {
+      "url": "https://news.ycombinator.com/",
+      "success": true,
+      "status": 200,
+      "render": "api",
+      "words": 441,
+      "ms": 1260,
+      "title": "Hacker News",
+      "warnings": [
+        "hackernews_api"
+      ],
+      "sample": "# Hacker News  - [Lovable apps expose passport details and more than 200K private messages](https://www.crissyfield.de/research/lovable-en/) \u00b7 568 points \u00b7 armcat - [SpaceX Catches"
+    },
+    {
+      "url": "https://stackoverflow.com/questions/231767/what-does-the-yield-keyword-do",
+      "success": true,
+      "status": 403,
+      "render": "browser",
+      "words": 17600,
+      "ms": 5128,
+      "title": "What does the \"yield\" keyword do in Python?",
+      "warnings": [
+        "http_status_403",
+        "upgraded_to_browser:challenge",
+        "http_status_403"
+      ],
+      "sample": "# OR  Email  Password  Sign up  Already have an account? [Log in](https://stackoverflow.com/users/login)  [Skip to main content](#content)  Stack Overflow  1. [About](https://stack"
+    },
+    {
+      "url": "https://quotes.toscrape.com/js/",
+      "success": true,
+      "status": 200,
+      "render": "browser",
+      "words": 237,
+      "ms": 325,
+      "title": "Quotes to Scrape",
+      "warnings": [
+        "upgraded_to_browser:js_shell"
+      ],
+      "sample": "# [Quotes to Scrape](https://quotes.toscrape.com/)  [Login](https://quotes.toscrape.com/login)  \u201cThe world as we have created it is a process of our thinking. It cannot be changed "
+    },
+    {
+      "url": "https://react.dev/learn",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 2611,
+      "ms": 728,
+      "title": "Quick Start \u2013 React",
+      "warnings": [],
+      "sample": "# Quick Start \u2013 React  Welcome to the React documentation! This page will give you an introduction to 80% of the React concepts that you will use on a daily basis.  ### You will le"
+    },
+    {
+      "url": "https://httpbin.org/html",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 606,
+      "ms": 40,
+      "title": null,
+      "warnings": [],
+      "sample": "# Herman Melville - Moby-Dick  Availing himself of the mild, summer-cool weather that now reigned in these latitudes, and in preparation for the peculiarly active pursuits shortly "
+    },
+    {
+      "url": "https://www.bbc.com/news",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1637,
+      "ms": 376,
+      "title": "BBC News - Breaking news, video and the latest top stories from the U.S. and around the world",
+      "warnings": [],
+      "sample": "# BBC News - Breaking news, video and the latest top stories from the U.S. and around the world  [Skip to content](#bbc-main)  [Watch Live](https://www.bbc.com/watch-live-news/)  S"
+    },
+    {
+      "url": "https://www.theguardian.com/world",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 1764,
+      "ms": 636,
+      "title": "Latest news from around the world | The Guardian",
+      "warnings": [],
+      "sample": "# Latest news from around the world | The Guardian  [Skip to main content](#maincontent)[Skip to navigation](#navigation)  [Print subscriptions](https://support.theguardian.com/sub"
+    },
+    {
+      "url": "https://www.reuters.com/world/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 98,
+      "error": "robots_disallowed: https://www.reuters.com/world/ is disallowed by robots.txt for DungScraperBot/0.1. Pass respect_robots=false only for a site you are allowed to access."
+    },
+    {
+      "url": "https://apnews.com/",
+      "success": false,
+      "status": 403,
+      "render": "browser",
+      "words": 36,
+      "ms": 8195,
+      "title": "Just a moment...",
+      "warnings": [
+        "http_status_403",
+        "upgraded_to_browser:challenge",
+        "http_status_403",
+        "challenge_unresolved"
+      ],
+      "sample": "## Performing security verification  This website uses a security service to protect against malicious bots. This page is displayed while the website verifies you are not a bot.  #"
+    },
+    {
+      "url": "https://old.reddit.com/r/Python/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 7,
+      "error": "reddit_not_configured: Reddit is not configured, and DungScraper will not scrape reddit.com HTML. Reddit's robots.txt disallows that fetch. Use the official API instead: create a script app at https://ww"
+    },
+    {
+      "url": "https://www.reddit.com/r/Python/",
+      "success": false,
+      "status": null,
+      "render": null,
+      "words": 0,
+      "ms": 4,
+      "error": "reddit_not_configured: Reddit is not configured, and DungScraper will not scrape reddit.com HTML. Reddit's robots.txt disallows that fetch. Use the official API instead: create a script app at https://ww"
+    },
+    {
+      "url": "https://medium.com/",
+      "success": false,
+      "status": 403,
+      "render": "browser",
+      "words": 36,
+      "ms": 8212,
+      "title": "Just a moment...",
+      "warnings": [
+        "http_status_403",
+        "upgraded_to_browser:challenge",
+        "http_status_403",
+        "challenge_unresolved"
+      ],
+      "sample": "## Performing security verification  This website uses a security service to protect against malicious bots. This page is displayed while the website verifies you are not a bot.  #"
+    },
+    {
+      "url": "https://arxiv.org/abs/1706.03762",
+      "success": true,
+      "status": 200,
+      "render": "api",
+      "words": 192,
+      "ms": 76,
+      "title": "Attention Is All You Need",
+      "warnings": [
+        "arxiv_api"
+      ],
+      "sample": "# Attention Is All You Need  Authors: Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin Published: 2017-06-12"
+    },
+    {
+      "url": "https://www.amazon.com/s?k=kindle",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 3283,
+      "ms": 2250,
+      "title": "Amazon.com : kindle",
+      "warnings": [],
+      "sample": "# 1-16 of over 100,000 results for \"kindle\" Sort by: Featured Price: Low to High Price: High to Low Avg. Customer Review Newest Arrivals Best Sellers Sort by:Featured  [![Kindle Br"
+    },
+    {
+      "url": "https://edition.cnn.com/",
+      "success": true,
+      "status": 200,
+      "render": "http",
+      "words": 2479,
+      "ms": 1654,
+      "title": "Breaking News, Latest News and Videos | CNN",
+      "warnings": [],
+      "sample": "### CNN values your feedback  1. How relevant is this ad to you?  2. Did you encounter any technical issues?  Video player was slow to load content  Video content never loaded  Ad "
+    }
+  ]
+}
