@@ -1,12 +1,45 @@
 # DungScraper
 
-Windows + Claude Desktop, step by step: [INSTALL_CLAUDE.md](INSTALL_CLAUDE.md).
+Self-hosted web scraping and crawling for AI agents. One tool turns a URL into Markdown, crawls a site, lists its URLs, searches the web, finds public business contacts and job links, and extracts JSON. It runs on your computer and needs no account or API key.
 
-Self-hosted web scraping and crawling for AI agents. One service turns a URL into Markdown, crawls a site, lists its URLs, searches the web, and extracts JSON.
+## Install in 1 minute
+
+Needs Python 3.11 or newer and git. No admin rights.
+
+```powershell
+git clone https://github.com/dakisxxx-oss/DungScraper.git
+cd DungScraper
+.\install.ps1
+```
+
+On macOS or Linux run `./install.sh` instead of `.\install.ps1`. Add `-NoBrowser` (Windows) or `--no-browser` (macOS, Linux) to skip the 150 MB Chromium download; plain HTTP scraping still works, JavaScript-only pages do not. The installers are safe to run again. If PowerShell blocks the script, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
+
+Other ways: `pip install git+https://github.com/dakisxxx-oss/DungScraper.git` then `python -m playwright install chromium`, or Docker (below). `dungscraper install-claude` is optional and adds the tools to Claude Desktop ([INSTALL_CLAUDE.md](INSTALL_CLAUDE.md)).
+
+## Use it
+
+`--local` runs everything in your own process. No server is needed.
+
+```powershell
+.\.venv\Scripts\dungscraper.exe scrape --local https://example.com
+.\.venv\Scripts\dungscraper.exe search "python junior remote jobs" --limit 5 --no-scrape --local
+.\.venv\Scripts\dungscraper.exe contacts https://example.com --depth 1 --local
+.\.venv\Scripts\dungscraper.exe jobs https://example.com/careers --local
+```
+
+(On macOS and Linux the program is `.venv/bin/dungscraper`. After `.\.venv\Scripts\Activate.ps1` or `source .venv/bin/activate` you can type just `dungscraper`.) `map` and `crawl` take `--local` too. Without `--local` the commands call the API, which you start with `.\run.ps1` or `./run.sh`; the playground is then at <http://127.0.0.1:8741>. The CLI prints only warnings and errors by default. Use `--log-level INFO` for more.
+
+### Contacts and jobs
+
+`contacts <url>` collects **public business** email addresses and careers links from a page, and with `--depth 1` (default) also from the contact, imprint, careers and about pages it links to. It reads `mailto:` links, visible text, schema.org JSON-LD, Cloudflare-protected links, and simple forms like `name [at] host [dot] com`. Each email comes with the page URL and a text snippet where it was found, a rough kind (`jobs`, `general`, `sales`, `support`, `press`, `legal`, `other`), and whether it matches the site's domain. Image names such as `logo@2x.png`, placeholders such as `you@example.com`, error-tracker keys and `noreply` addresses are dropped. robots.txt is respected. API: `POST /v1/contacts`.
+
+`jobs <url>` lists links on a careers page that look like single job postings (JSON-LD `JobPosting`, job-board hosts such as Greenhouse, Lever or Workable, `/jobs/<slug>` paths, apply links). Entries get `junior` and `remote` tags when the text says so. Pages that list roles as collapsed sections with an apply-by-email address are reported with `apply_email`. API: `POST /v1/jobs`.
+
+Use these for public company information only. See [SECURITY.md](SECURITY.md) for responsible use.
 
 DungScraper is Python on purpose. [Trafilatura](https://github.com/adbar/trafilatura) is still the strongest open-source main-content extractor, and it is Python-only. The same language then covers FastAPI, Playwright, PyMuPDF, the MCP server, the SDK, and the CLI, so there is one process model to deploy.
 
-## Quickstart
+## Docker and manual setup
 
 Docker, from this directory:
 
@@ -14,7 +47,7 @@ Docker, from this directory:
 docker compose up --build
 ```
 
-That starts Redis, the `dungscraper` API, and `dungscraper-worker`. The image is `dungscraper`. The API listens on port **8741**. The dev key is `dungscraper-dev-key`.
+That starts Redis, the `dungscraper` API, and `dungscraper-worker`. The image is `dungscraper`. The API listens on `127.0.0.1:8741` (this computer only). The dev key is `dungscraper-dev-key`; change `DUNGSCRAPER_API_KEYS` before you publish the port anywhere else.
 
 Without Docker:
 
@@ -46,6 +79,8 @@ Health check: `GET /health` (no API key required).
 | `GET /v1/crawl/{id}` | Poll a crawl. `DELETE` cancels it. |
 | `POST /v1/map` | URLs from sitemaps plus links. `render=browser` reads JavaScript navigation. |
 | `POST /v1/search` | Search, then scrape the hits. Falls through providers when one rate-limits. |
+| `POST /v1/contacts` | Public business emails (with where each was found) and careers links from a page or a few linked pages. |
+| `POST /v1/jobs` | Links to job postings on a careers page, tagged junior and remote. |
 | `POST /v1/extract` | JSON from a page or from text, checked against a JSON Schema. |
 | `POST /v1/chunk` | Heading-aware chunks for retrieval. |
 | `POST /v1/diff` | Unified diff of markdown against a baseline or the previous snapshot. |
