@@ -1,5 +1,7 @@
 # DungScraper
 
+Windows + Claude Desktop, step by step: [INSTALL_CLAUDE.md](INSTALL_CLAUDE.md).
+
 Self-hosted web scraping and crawling for AI agents. One service turns a URL into Markdown, crawls a site, lists its URLs, searches the web, and extracts JSON.
 
 DungScraper is Python on purpose. [Trafilatura](https://github.com/adbar/trafilatura) is still the strongest open-source main-content extractor, and it is Python-only. The same language then covers FastAPI, Playwright, PyMuPDF, the MCP server, the SDK, and the CLI, so there is one process model to deploy.
