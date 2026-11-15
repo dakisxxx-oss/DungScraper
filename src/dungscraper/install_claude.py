@@ -10,14 +10,43 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def msix_claude_config(localappdata: Path) -> Path | None:
+    """Store/MSIX Claude keeps its config under Packages\\Claude_*\\LocalCache.
+
+    Returns that path when a Claude package folder exists. If several match,
+    the one that already has a config file wins; otherwise the first name
+    in sorted order is used.
+    """
+    packages = localappdata / "Packages"
+    if not packages.is_dir():
+        return None
+    folders = sorted(path for path in packages.glob("Claude_*") if path.is_dir())
+    if not folders:
+        return None
+    configs = [folder / "LocalCache" / "Roaming" / "Claude" / "claude_desktop_config.json" for folder in folders]
+    for config in configs:
+        if config.exists():
+            return config
+    return configs[0]
+
+
 def claude_config_path(
     *,
     platform: str | None = None,
     home: Path | None = None,
     appdata: str | None = None,
+    localappdata: str | None = None,
 ) -> Path:
     system = platform or sys.platform
     if system == "win32":
+        local_root = Path(
+            localappdata
+            if localappdata is not None
+            else os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+        )
+        msix = msix_claude_config(local_root)
+        if msix is not None:
+            return msix
         root = Path(appdata if appdata is not None else os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))
         return root / "Claude" / "claude_desktop_config.json"
     base = home or Path.home()

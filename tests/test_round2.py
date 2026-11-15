@@ -134,7 +134,23 @@ def test_clip_paginates():
 def test_claude_config_paths_and_backup(tmp_path: Path):
     assert claude_config_path(platform="darwin", home=tmp_path).name == "claude_desktop_config.json"
     assert "Application Support" in str(claude_config_path(platform="darwin", home=tmp_path))
-    assert claude_config_path(platform="win32", appdata=str(tmp_path)).parts[-2:] == ("Claude", "claude_desktop_config.json")
+    classic = claude_config_path(
+        platform="win32",
+        appdata=str(tmp_path / "Roaming"),
+        localappdata=str(tmp_path / "Local"),
+    )
+    assert classic == tmp_path / "Roaming" / "Claude" / "claude_desktop_config.json"
+    package = tmp_path / "Local" / "Packages" / "Claude_store" / "LocalCache" / "Roaming" / "Claude"
+    package.mkdir(parents=True)
+    (package / "claude_desktop_config.json").write_text("{}", encoding="utf-8")
+    other = tmp_path / "Local" / "Packages" / "Claude_other"
+    other.mkdir()
+    msix = claude_config_path(
+        platform="win32",
+        appdata=str(tmp_path / "Roaming"),
+        localappdata=str(tmp_path / "Local"),
+    )
+    assert msix == package / "claude_desktop_config.json"
     assert claude_config_path(platform="linux", home=tmp_path).parts[-3:] == (".config", "Claude", "claude_desktop_config.json")
 
     path = tmp_path / "Claude" / "claude_desktop_config.json"

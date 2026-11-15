@@ -244,7 +244,7 @@ dungscraper install-claude --launcher uvx --from /path/to/this/repo
 dungscraper install-claude --launcher pipx --dry-run
 ```
 
-`--launcher auto` uses the `dungscraper` executable on `PATH`. The config path is `%APPDATA%\Claude\claude_desktop_config.json` on Windows and `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS. Other MCP servers in the file are left alone.
+`--launcher auto` uses the `dungscraper` executable on `PATH`. On Windows it writes the Microsoft Store config when `%LOCALAPPDATA%\Packages\Claude_*` exists (`LocalCache\Roaming\Claude\claude_desktop_config.json`), and otherwise `%APPDATA%\Claude\claude_desktop_config.json`. macOS uses `~/Library/Application Support/Claude/claude_desktop_config.json`. Other MCP servers in the file are left alone.
 
 The API also serves streamable HTTP at `http://127.0.0.1:8741/mcp`. Send the same bearer token you use for the REST API when auth is on.
 
