@@ -558,6 +558,7 @@ class JobLink(BaseModel):
     title: str = ""
     reason: str = ""
     tags: list[str] = Field(default_factory=list)
+    apply_email: str | None = None
 
 
 class JobsData(BaseModel):

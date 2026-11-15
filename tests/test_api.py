@@ -281,3 +281,40 @@ def test_crawl_map_webhook_and_robots(api_settings):
 @pytest.mark.asyncio
 async def test_browser_shutdown():
     await shutdown_browser()
+
+
+def test_contacts_and_jobs_endpoints(api_settings):
+    from pathlib import Path
+
+    fixtures = Path(__file__).parent / "fixtures"
+    pages = {
+        "/robots.txt": ("text/plain", "User-agent: *\nAllow: /\n"),
+        "/": ("text/html", (fixtures / "contact_page.html").read_text(encoding="utf-8")),
+        "/careers": ("text/html", (fixtures / "careers_page.html").read_text(encoding="utf-8")),
+    }
+    server, base, _posts = _serve(pages)
+    try:
+        with TestClient(create_app(api_settings)) as client:
+            contacts = client.post("/v1/contacts", json={"url": base + "/", "depth": 0, "delay": 0})
+            assert contacts.status_code == 200
+            data = contacts.json()["data"]
+            emails = {item["email"]: item for item in data["emails"]}
+            assert "info@acme-software.io" in emails
+            assert emails["jobs@acme-software.io"]["kind"] == "jobs"
+            assert emails["info@acme-software.io"]["found_at"][0]["url"] == base + "/"
+            assert data["pages_scanned"] == 1
+            assert data["career_links"]
+
+            jobs = client.post("/v1/jobs", json={"url": base + "/careers"})
+            assert jobs.status_code == 200
+            titles = {item["title"] for item in jobs.json()["data"]["jobs"]}
+            assert "Frontend Intern" in titles
+
+            bad = client.post("/v1/contacts", json={"url": "not a url"})
+            assert bad.status_code == 422
+            blocked = client.post("/v1/contacts", json={"url": base + "/missing", "depth": 0})
+            assert blocked.status_code >= 400
+            assert blocked.json()["success"] is False
+    finally:
+        server.shutdown()
+        server.server_close()

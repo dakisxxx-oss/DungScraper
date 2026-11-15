@@ -196,3 +196,13 @@ async def test_robots_can_be_ignored_when_asked(settings, site):
     data = await run(settings, site, depth=1, respect_robots=False)
     assert "secret@acme-site.io" in by_email(data.emails)
     assert data.skipped_robots == 0
+
+
+def test_translations_of_the_same_page_are_not_career_links():
+    from dungscraper.core.contacts import _is_translation_of
+
+    assert _is_translation_of("https://acme.io/de/jobs/", "https://acme.io/jobs/")
+    assert _is_translation_of("https://acme.io/jobs/", "https://acme.io/fr/jobs")
+    assert _is_translation_of("https://acme.io/jobs", "https://acme.io/jobs/")
+    assert not _is_translation_of("https://acme.io/jobs/senior", "https://acme.io/jobs/")
+    assert not _is_translation_of("https://careers.acme.io/jobs/", "https://acme.io/jobs/")

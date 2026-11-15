@@ -14,8 +14,8 @@ from pydantic import ValidationError
 
 from dungscraper.client import DungScraper
 from dungscraper.errors import DungScraperError
-from dungscraper.local import local_crawl, local_map, local_scrape, local_search
-from dungscraper.models import CrawlRequest, MapRequest, SearchRequest
+from dungscraper.local import local_contacts, local_crawl, local_jobs, local_map, local_scrape, local_search
+from dungscraper.models import ContactsRequest, CrawlRequest, JobsRequest, MapRequest, SearchRequest
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="DungScraper scrapes and crawls the web for agents.")
 
@@ -253,6 +253,49 @@ def search(
         else:
             with _client(base_url, api_key) as client:
                 data = client.search(query, limit=limit, provider=provider, scrape=scrape_results)
+        typer.echo(_dump(data))
+    except DungScraperError as exc:
+        _echo_error(exc)
+
+
+@app.command()
+def contacts(
+    url: str,
+    depth: int = typer.Option(1, min=0, max=3, help="0 reads only this page. 1 also reads contact, imprint, careers and about pages it links to."),
+    limit: int = typer.Option(8, min=1, max=30, help="Most pages to read."),
+    render: str = typer.Option("auto"),
+    local: bool = typer.Option(False, help="Run in this process instead of calling the API."),
+    base_url: Optional[str] = typer.Option(None),
+    api_key: Optional[str] = typer.Option(None),
+) -> None:
+    """Find public business emails and careers links. Prints JSON with where each email was found."""
+    try:
+        if local:
+            data = asyncio.run(local_contacts(ContactsRequest(url=url, depth=depth, limit=limit, render=render)))
+        else:
+            with _client(base_url, api_key) as client:
+                data = client.contacts(url, depth=depth, limit=limit, render=render)
+        typer.echo(_dump(data))
+    except DungScraperError as exc:
+        _echo_error(exc)
+
+
+@app.command()
+def jobs(
+    url: str,
+    limit: int = typer.Option(100, min=1, max=500),
+    render: str = typer.Option("auto"),
+    local: bool = typer.Option(False, help="Run in this process instead of calling the API."),
+    base_url: Optional[str] = typer.Option(None),
+    api_key: Optional[str] = typer.Option(None),
+) -> None:
+    """List links to job postings on a careers page. Tags junior and remote hints."""
+    try:
+        if local:
+            data = asyncio.run(local_jobs(JobsRequest(url=url, limit=limit, render=render)))
+        else:
+            with _client(base_url, api_key) as client:
+                data = client.jobs(url, limit=limit, render=render)
         typer.echo(_dump(data))
     except DungScraperError as exc:
         _echo_error(exc)

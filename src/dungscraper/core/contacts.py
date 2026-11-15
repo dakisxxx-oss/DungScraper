@@ -291,6 +291,19 @@ def follow_score(url: str, text: str) -> int | None:
     return None
 
 
+_LANG_PREFIX = re.compile(r"^/[a-z]{2}(?:[-_][a-zA-Z]{2})?(?=/|$)")
+
+
+def _is_translation_of(link_url: str, page_url: str) -> bool:
+    """True for /de/jobs/ when the page is /jobs/ (the same page in another language)."""
+    link, page = urlsplit(link_url), urlsplit(page_url)
+    if host_key(link_url) != host_key(page_url):
+        return False
+    link_path = _LANG_PREFIX.sub("", link.path).rstrip("/") or "/"
+    page_path = _LANG_PREFIX.sub("", page.path).rstrip("/") or "/"
+    return link_path == page_path
+
+
 def _same_domain(email: str, host: str) -> bool:
     domain = email.rpartition("@")[2]
     return bool(domain and host) and (domain == host or host.endswith("." + domain) or domain.endswith("." + host))
@@ -320,6 +333,8 @@ class _Collector:
                 entry.found_at.append(EmailLocation(url=url, source=item.source, context=item.context))  # type: ignore[arg-type]
         for link in extract.career_links:
             key = dedupe_key(link.url)
+            if _is_translation_of(link.url, url):
+                continue
             if key not in self.careers and len(self.careers) < 30:
                 self.careers[key] = CareerLink(url=link.url, text=link.text[:120], found_at=url)
 

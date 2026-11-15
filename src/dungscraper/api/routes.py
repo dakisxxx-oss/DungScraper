@@ -9,9 +9,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from dungscraper import __version__
 from dungscraper.api.auth import require_api_key
+from dungscraper.core.contacts import find_contacts
 from dungscraper.core.chunk import chunk_markdown, estimate_tokens
 from dungscraper.core.diff import markdown_diff, remember_snapshot
 from dungscraper.core.extract import extract_structured
+from dungscraper.core.joblinks import find_job_links
 from dungscraper.core.jobs import cancel_crawl, job_view, resume_crawl, start_crawl
 from dungscraper.core.map import map_site
 from dungscraper.core.scrape import scrape_url
@@ -25,12 +27,16 @@ from dungscraper.models import (
     ChunkData,
     ChunkRequest,
     ChunkResponse,
+    ContactsRequest,
+    ContactsResponse,
     DiffRequest,
     DiffResponse,
     CrawlRequest,
     CrawlResponse,
     ExtractRequest,
     ExtractResponse,
+    JobsRequest,
+    JobsResponse,
     MapRequest,
     MapResponse,
     ScrapeRequest,
@@ -219,6 +225,45 @@ async def search(body: SearchRequest, request: Request) -> SearchResponse:
         browser=services.browser,
     )
     return SearchResponse(success=True, data=data)
+
+
+@router.post(
+    "/v1/contacts",
+    response_model=ContactsResponse,
+    response_model_exclude_none=True,
+    tags=["contacts"],
+    summary="Find public business emails and careers links on a page or small site",
+)
+async def contacts(body: ContactsRequest, request: Request) -> ContactsResponse:
+    services = _services(request)
+    data = await find_contacts(
+        body,
+        settings=services.settings,
+        client=services.client,
+        cache=services.cache,
+        browser=services.browser,
+        limiter=services.limiter,
+    )
+    return ContactsResponse(success=True, data=data)
+
+
+@router.post(
+    "/v1/jobs",
+    response_model=JobsResponse,
+    response_model_exclude_none=True,
+    tags=["contacts"],
+    summary="List links to job postings on a careers page",
+)
+async def jobs(body: JobsRequest, request: Request) -> JobsResponse:
+    services = _services(request)
+    data = await find_job_links(
+        body,
+        settings=services.settings,
+        client=services.client,
+        cache=services.cache,
+        browser=services.browser,
+    )
+    return JobsResponse(success=True, data=data)
 
 
 @router.post(

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 import httpx
 from bs4 import BeautifulSoup
@@ -58,7 +58,7 @@ JUNIOR = re.compile(
     re.IGNORECASE,
 )
 REMOTE = re.compile(
-    r"\b(remote|work from home|wfh|anywhere|telecommute|nuotoli\w*|homeoffice|home office)\b", re.IGNORECASE
+    r"\b(remote(?:ly)?|work from home|wfh|anywhere|telecommute|nuotoli\w*|homeoffice|home office)\b", re.IGNORECASE
 )
 
 
@@ -155,6 +155,49 @@ def _looks_like_posting(url: str, text: str, page_path: str) -> str | None:
     return None
 
 
+INLINE_ITEM = "details, .vc_toggle, .accordion-item, .accordion__item, .wp-block-accordion-item"
+INLINE_TITLE = ".vc_toggle_title, .accordion-title, .accordion__title, summary, h2, h3, h4, h5"
+JOB_BODY = re.compile(
+    r"\b(responsibilit\w+|requirements?|qualifications?|your profile|we are looking for|we[’']re looking for"
+    r"|your resume|your cv|send your|apply)\b",
+    re.IGNORECASE,
+)
+
+
+def _inline_listings(soup: BeautifulSoup, base_url: str, limit: int) -> list[JobLink]:
+    """Pages that list roles as collapsed sections with no link per role (apply by email)."""
+    found: list[JobLink] = []
+    seen: set[str] = set()
+    for node in soup.select(INLINE_ITEM):
+        title_node = node.select_one(INLINE_TITLE)
+        title = title_node.get_text(" ", strip=True) if title_node is not None else ""
+        if not title or len(title) > 150 or title.endswith("?") or title.lower() in seen:
+            continue
+        body = node.get_text(" ", strip=True)
+        if not JOB_BODY.search(body):
+            continue
+        seen.add(title.lower())
+        apply_email = None
+        for anchor in node.find_all("a", href=True):
+            if anchor["href"].lower().startswith("mailto:"):
+                match = re.search(r"[^\s:?,;]+@[^\s?,;]+", unquote(anchor["href"][7:]))
+                if match:
+                    apply_email = match.group(0).lower()
+                    break
+        found.append(
+            JobLink(
+                url=base_url,
+                title=title,
+                reason="inline:collapsed section",
+                tags=_tags(f"{title} {body[:1500]}"),
+                apply_email=apply_email,
+            )
+        )
+        if len(found) >= limit:
+            break
+    return found
+
+
 def extract_job_links(html: str, base_url: str, *, limit: int = 100) -> tuple[list[JobLink], int]:
     """Return (job posting links, number of anchors seen) for one page."""
     soup = BeautifulSoup(html, "lxml")
@@ -216,7 +259,10 @@ def extract_job_links(html: str, base_url: str, *, limit: int = 100) -> tuple[li
             tags=_tags(f"{title} {absolute} {card}"),
         )
 
-    return list(found.values())[:limit], total
+    jobs = list(found.values())
+    if not jobs:
+        jobs = _inline_listings(soup, base_url, limit)
+    return jobs[:limit], total
 
 
 async def find_job_links(

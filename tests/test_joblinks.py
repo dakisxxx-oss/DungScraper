@@ -72,3 +72,15 @@ def test_is_career_link():
     assert is_career_link("https://acme.io/join", "We're hiring")
     assert not is_career_link("https://acme.io/about", "About us")
     assert not is_career_link("https://acme.io/blog/post", "A long article that mentions jobs somewhere in the title text here")
+
+
+def test_inline_listings_without_links_report_apply_email():
+    html = (FIXTURES / "jobs_inline.html").read_text(encoding="utf-8")
+    found, _ = extract_job_links(html, "https://acme-software.io/jobs/")
+    titles = [item.title for item in found]
+    assert titles == ["Junior Support Engineer", "Office Manager"]  # the FAQ and "Our values" are not roles
+    junior = found[0]
+    assert junior.reason == "inline:collapsed section"
+    assert junior.apply_email == "talent@acme-software.io"
+    assert set(junior.tags) == {"junior", "remote"}
+    assert found[1].apply_email is None
