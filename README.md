@@ -2,6 +2,16 @@
 
 Self-hosted web scraping and crawling for AI agents. One tool turns a URL into Markdown, crawls a site, lists its URLs, searches the web, finds public business contacts and job links, and extracts JSON. It runs on your computer and needs no account or API key.
 
+**Why use it**
+
+- **One command to install.** `install.ps1` on Windows, `install.sh` on macOS and Linux.
+- **Private by default.** Runs on your computer, listens on 127.0.0.1, no account, no API key.
+- **Clean Markdown.** Main content only, with tables, code, links and images kept.
+- **Handles hard pages.** HTTP first, a real Chromium browser when a page needs JavaScript.
+- **Made for agents.** REST API, Python SDK, CLI and an MCP server for Claude and other agents.
+- **Public company info.** Business emails with the page where each was found, and job links tagged junior and remote.
+- **Polite.** Respects robots.txt.
+
 ## Install in 1 minute
 
 Needs Python 3.11 or newer and git. No admin rights.
