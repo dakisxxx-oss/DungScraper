@@ -53,6 +53,31 @@ class RobotsGate:
             log.warning("robots check failed", extra={"data": {"url": url}})
             return self.fail_open
 
+    async def crawl_delay(self, url: str) -> float | None:
+        """Crawl-delay for this user agent, capped at 10 seconds. None when unset."""
+        if not self.respect:
+            return None
+        origin = origin_of(url)
+        if origin not in self._parsed:
+            await self._load(origin)
+        parser = self._parsed.get(origin)
+        if parser is None or not hasattr(parser, "crawl_delay"):
+            return None
+        try:
+            value = parser.crawl_delay(self.user_agent)
+        except Exception:
+            log.warning("crawl-delay check failed", extra={"data": {"url": url}})
+            return None
+        if value is None:
+            return None
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            return None
+        if seconds <= 0:
+            return None
+        return min(seconds, 10.0)
+
     async def _load(self, origin: str) -> None:
         robots_url = urljoin(origin + "/", "robots.txt")
         try:

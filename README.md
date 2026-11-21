@@ -2,6 +2,12 @@
 
 Windows + Claude Desktop, step by step: [INSTALL_CLAUDE.md](INSTALL_CLAUDE.md).
 
+## Kas naujo
+
+Reddit skaitomas be API raktų. Viešas JSON (`old.reddit.com`, tada `www` ir `np`), jei nepavyksta — RSS, tada `old.reddit.com` HTML. Jei nustatyti `DUNGSCRAPER_REDDIT_CLIENT_ID` ir `DUNGSCRAPER_REDDIT_CLIENT_SECRET`, naudojama oficiali API, o viešas kelias lieka atsargai. Claude įrankis `reddit` nebesako, kad šaltinis nesukonfigūruotas.
+
+Taip pat: `read_feed` (RSS/Atom įrašai), `scrape` atpažįsta srautus, apkarpytas atsakymas turi `outline` (antraštė ir `offset`), crawl gerbia `Crawl-delay` (daugiausia 10 s), YouTube titrai imami ir iš vaizdo puslapio, kai senasis sąrašas tuščias.
+
 Self-hosted web scraping and crawling for AI agents. One service turns a URL into Markdown, crawls a site, lists its URLs, searches the web, and extracts JSON.
 
 DungScraper is Python on purpose. [Trafilatura](https://github.com/adbar/trafilatura) is still the strongest open-source main-content extractor, and it is Python-only. The same language then covers FastAPI, Playwright, PyMuPDF, the MCP server, the SDK, and the CLI, so there is one process model to deploy.
@@ -81,7 +87,16 @@ curl -s http://127.0.0.1:8741/v1/scrape \
 
 ### Reddit and other site APIs
 
-reddit.com HTML is not fetched. Reddit's robots.txt disallows it, and that default stays on. A Reddit post, comment thread, subreddit, or search uses the official OAuth API when you configure a script app from <https://www.reddit.com/prefs/apps>:
+Reddit works with no API key. A subreddit listing (`hot`, `new`, `top`, `rising`), a post and its comments, a search, or a user page is read in this order:
+
+1. The official OAuth API, only when `DUNGSCRAPER_REDDIT_CLIENT_ID` and `DUNGSCRAPER_REDDIT_CLIENT_SECRET` are both set. If that call fails, the public chain below is the fallback.
+2. Public JSON on `old.reddit.com`, then `www.reddit.com`, then `np.reddit.com` (`.json`, a browser User-Agent, at least `DUNGSCRAPER_REDDIT_MIN_INTERVAL_SECONDS` between requests, default 1.25). HTTP 429 waits for `Retry-After` up to 8 seconds and retries once. A longer wait is returned as `reddit_rate_limited` instead of hitting more hosts. A blocked response can be retried once with curl_cffi Chrome impersonation (`DUNGSCRAPER_REDDIT_BROWSER_IMPERSONATE=false` turns that off).
+3. The same resource as RSS.
+4. `old.reddit.com` HTML, parsed from the listing markup.
+
+Third-party mirrors are not used. They go offline too often to be a dependency. Datacenter IPs are often blocked; a home connection usually gets a normal JSON response. Private, quarantined, banned, and missing pages return `reddit_private`, `reddit_quarantined`, `reddit_banned`, or `reddit_not_found`. Anything else that never answers is `reddit_unavailable`. None of these say the source is "not configured".
+
+Optional keys, if you already have a script app:
 
 ```bash
 export DUNGSCRAPER_REDDIT_CLIENT_ID=your_id
@@ -91,9 +106,9 @@ export DUNGSCRAPER_REDDIT_PASSWORD=your_password
 export DUNGSCRAPER_REDDIT_USER_AGENT='dungscraper/0.1 by yourname'
 ```
 
-Script apps use the password grant, so the username and password are the developer account that owns the app. If those two are omitted, DungScraper tries the client-credentials grant. With nothing set, a Reddit URL returns `reddit_not_configured` and explains these variables. It does not try to dodge the block.
+The same adapter hook reads other allowed APIs and falls back to a normal fetch when they fail: Wikipedia's REST HTML, GitHub's REST API (`DUNGSCRAPER_GITHUB_TOKEN` optional), the arXiv Atom API, Hacker News' Firebase API, and YouTube captions. Captions come from the public timedtext list, and from the watch page's player response when that list is empty. `max_comment_depth` limits Reddit and Hacker News threads.
 
-The same adapter hook reads other allowed APIs and falls back to a normal fetch when they fail: Wikipedia's REST HTML, GitHub's REST API (`DUNGSCRAPER_GITHUB_TOKEN` optional), the arXiv Atom API, Hacker News' Firebase API, and YouTube's public caption tracks when a video exposes them. `max_comment_depth` limits Reddit and Hacker News threads.
+RSS and Atom documents are rendered as titled items when you scrape the feed URL. The MCP tool `read_feed` returns the same items as JSON. A clipped `scrape` result includes `outline`: each heading and the character `offset` to pass back. Crawls honor `Crawl-delay` from robots.txt, capped at 10 seconds.
 
 ```json
 {
@@ -250,9 +265,9 @@ dungscraper install-claude --launcher pipx --dry-run
 
 The API also serves streamable HTTP at `http://127.0.0.1:8741/mcp`. Send the same bearer token you use for the REST API when auth is on.
 
-Tools: `scrape`, `batch_scrape`, `crawl`, `crawl_status`, `map_site`, `search_web`, `extract`, `chunk_text`.
+Tools: `scrape`, `batch_scrape`, `crawl`, `crawl_status`, `map_site`, `search_web`, `extract`, `chunk_text`, `reddit`, `read_feed`.
 
-`scrape` returns at most 12,000 characters of markdown. The `truncation` object has `next_offset`; call again with that `offset` for the next slice. Crawl pages and batch results are clipped the same way so a long site does not fill the model context. `examples/cursor.mcp.json` shows the Cursor stdio entry.
+`reddit` reads a subreddit, post, search, or user with no API key. `read_feed` reads an RSS or Atom URL into items. `scrape` returns at most 12,000 characters of markdown. The `truncation` object has `next_offset`; call again with that `offset` for the next slice. When the page has headings, `outline` lists each one with the offset to jump there. Crawl pages and batch results are clipped the same way so a long site does not fill the model context. `examples/cursor.mcp.json` shows the Cursor stdio entry.
 
 ## Configuration
 
@@ -270,6 +285,8 @@ See `.env.example`. The important ones:
 | `DUNGSCRAPER_BRAVE_API_KEY` | | Optional search provider. |
 | `DUNGSCRAPER_SERPER_API_KEY` | | Optional search provider. |
 | `DUNGSCRAPER_SEARXNG_URL` | | Optional search provider. |
+| `DUNGSCRAPER_REDDIT_MIN_INTERVAL_SECONDS` | `1.25` | Gap between public Reddit requests. |
+| `DUNGSCRAPER_REDDIT_BROWSER_IMPERSONATE` | `true` | One curl_cffi retry when public JSON is blocked. |
 
 Retries cover timeouts and HTTP 429/502/503/504, with exponential backoff. Logs are JSON on stdout. Every response includes `x-request-id`.
 
@@ -304,7 +321,7 @@ Twenty URLs (news, docs, a SPA, e-commerce, Q&A, Reddit, Medium), same rule both
 
 The page that moved in the second round was the Stack Overflow question on `yield`: a 4-word "Just a moment" interstitial became about 16,000 words that include the answer. AP News and Medium stayed on a challenge page. Reuters and both Reddit URLs were refused because their robots.txt disallows `DungScraperBot`.
 
-The third round stayed **15/20**. Wikipedia, GitHub, Hacker News, and arXiv come from their public APIs. Reddit with no app credentials returns `reddit_not_configured` and does not fetch HTML. Reuters is still a robots refusal. AP News and Medium still stop on a security check.
+The third round stayed **15/20** in that run. Wikipedia, GitHub, Hacker News, and arXiv came from their public APIs. Reddit with no app credentials returned `reddit_not_configured` and did not fetch HTML. That Reddit path has since changed: public JSON, then RSS, then old.reddit HTML, with no API key. Reuters was still a robots refusal. AP News and Medium still stopped on a security check.
 
 Round 4 added the free challenge ladder and measured the same set again (`benchmark/hard-round4.json`): still **15/20** from this VPS. curl_cffi ran on the Cloudflare pages and was still blocked. Patchright, Camoufox, and a Byparr sidecar were not installed here, so the browser step was the bundled Playwright fallback. AP News and Medium remain challenge pages. Stack Overflow's markdown in that run opens on the question title. A residential or home IP, plus `pip install 'dungscraper[stealth]'` or Byparr, is the setup this ladder is meant for. It will not reliably beat an interactive image captcha.
 
@@ -341,7 +358,7 @@ Inside Compose the sidecar is `http://byparr:8191/v1`. Leave the variable empty 
 
 Medium articles, profiles, and tags that come back as a challenge fall back to the public RSS feed (`/feed/@author`, `/feed/publication`, `/feed/tag/name`). Other sites are checked for `<link rel="alternate" type="application/rss+xml">`.
 
-Limits, plainly: no free tool reliably solves an interactive image captcha. Clearance cookies are tied to the egress IP that minted them, so a datacenter or VPS address is blocked far more often than a home connection. Some sites' terms forbid this. `robots.txt` stays on, and Reddit still uses only the official API.
+Limits, plainly: no free tool reliably solves an interactive image captcha. Clearance cookies are tied to the egress IP that minted them, so a datacenter or VPS address is blocked far more often than a home connection. Some sites' terms forbid this. `robots.txt` stays on. Reddit is read through public JSON, RSS, or old.reddit HTML, and through the official API only when you set keys.
 
 ## Tests
 
@@ -354,7 +371,8 @@ Unit tests cover extraction, chunking, simhash, robots, sitemaps, SSRF checks, s
 ## Known gaps
 
 - Managed challenges still win on many datacenter IPs. The free ladder (curl_cffi, Patchright, Camoufox, Byparr, opt-in SeleniumBase) does not reliably solve interactive image captchas. A response that is still an interstitial sets `block_reason` to the vendor name. It works better from a home IP than from a VPS.
-- Sites that disallow `DungScraperBot` in robots.txt are not fetched, except where a separate official API is configured. Reddit HTML is never the fallback. Reuters stays blocked unless its robots.txt allows the bot. `respect_robots: false` is for a site you are allowed to read, not a default.
+- Sites that disallow `DungScraperBot` in robots.txt are not fetched, except where a separate adapter reads an API or feed. Reuters stays blocked unless its robots.txt allows the bot. `respect_robots: false` is for a site you are allowed to read, not a default. Reddit listings do not use that generic fetch: they use public JSON, RSS, then old.reddit HTML, with a gap between requests. A datacenter IP may still be blocked.
+- `Crawl-delay` above 10 seconds is capped at 10 so one robots.txt line cannot stall a crawl.
 - Signup walls and ad prompts can sit in front of real copy. Stack Overflow's answer is in the markdown, under a signup form. CNN's scrape opens on a feedback prompt.
 - Search still depends on a provider. With no Brave, Serper, or SearXNG key, DuckDuckGo is the only option, and it can rate-limit this host.
 - Extract returns `llm_not_configured` until you set an OpenAI-compatible model. It does not guess.

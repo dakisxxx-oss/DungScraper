@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     reddit_username: str = ""
     reddit_password: str = ""
     reddit_user_agent: str = "dungscraper/0.1 (script app)"
+    reddit_min_interval_seconds: float = 1.25
+    reddit_browser_impersonate: bool = True
     github_token: str = ""
     log_level: str = "INFO"
     log_json: bool = True

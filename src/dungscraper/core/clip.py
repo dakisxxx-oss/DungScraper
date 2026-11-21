@@ -2,6 +2,26 @@
 
 from __future__ import annotations
 
+import re
+
+_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)\s*$", re.MULTILINE)
+
+
+def markdown_outline(text: str, *, limit: int = 40) -> list[dict]:
+    """Headings and the character offset to pass back into scrape(offset=...)."""
+    found: list[dict] = []
+    for match in _HEADING.finditer(text or ""):
+        found.append(
+            {
+                "level": len(match.group(1)),
+                "heading": match.group(2).strip(),
+                "offset": match.start(),
+            }
+        )
+        if len(found) >= limit:
+            break
+    return found
+
 
 def clip_text(text: str, *, max_chars: int = 12_000, offset: int = 0) -> tuple[str, dict]:
     total = len(text or "")
@@ -29,6 +49,7 @@ def clip_payload(data: dict, *, max_chars: int, offset: int = 0, page_chars: int
     if not isinstance(data, dict):
         return data
     if isinstance(data.get("markdown"), str):
+        _attach_outline(data, data["markdown"])
         text, info = clip_text(data["markdown"], max_chars=max_chars, offset=offset)
         data["markdown"] = text
         data["truncation"] = info
@@ -40,6 +61,7 @@ def clip_payload(data: dict, *, max_chars: int, offset: int = 0, page_chars: int
     if isinstance(pages, list):
         for page in pages:
             if isinstance(page, dict) and isinstance(page.get("markdown"), str):
+                _attach_outline(page, page["markdown"])
                 text, info = clip_text(page["markdown"], max_chars=page_chars, offset=0)
                 page["markdown"] = text
                 page["truncation"] = info
@@ -49,12 +71,20 @@ def clip_payload(data: dict, *, max_chars: int, offset: int = 0, page_chars: int
             if not isinstance(item, dict):
                 continue
             if isinstance(item.get("markdown"), str):
+                _attach_outline(item, item["markdown"])
                 text, info = clip_text(item["markdown"], max_chars=page_chars, offset=0)
                 item["markdown"] = text
                 item["truncation"] = info
             nested = item.get("data")
             if isinstance(nested, dict) and isinstance(nested.get("markdown"), str):
+                _attach_outline(nested, nested["markdown"])
                 text, info = clip_text(nested["markdown"], max_chars=page_chars, offset=0)
                 nested["markdown"] = text
                 nested["truncation"] = info
     return data
+
+
+def _attach_outline(payload: dict, markdown: str) -> None:
+    outline = markdown_outline(markdown)
+    if outline:
+        payload["outline"] = outline

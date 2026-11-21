@@ -119,6 +119,27 @@ def test_robots_and_sitemap_parse():
     assert children == ["https://example.com/s1.xml"]
 
 
+def test_polite_interval_honors_crawl_delay_with_a_cap():
+    from dungscraper.core.limiter import polite_interval
+
+    assert polite_interval(0.25, None) == 0.25
+    assert polite_interval(2, 1) == 2
+    assert polite_interval(0.25, 12) == 10
+
+
+@pytest.mark.asyncio
+async def test_robots_gate_reads_crawl_delay():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="User-agent: *\nCrawl-delay: 12\nDisallow: /private\n")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        gate = RobotsGate(client, "DungScraperBot/0.1", respect=True, fail_open=False)
+        assert await gate.crawl_delay("https://example.com/docs") == 10
+        closed = RobotsGate(client, "DungScraperBot/0.1", respect=False, fail_open=False)
+        assert await closed.crawl_delay("https://example.com/docs") is None
+
+
 @pytest.mark.asyncio
 async def test_robots_gate_disallows_private_path():
     def handler(request: httpx.Request) -> httpx.Response:

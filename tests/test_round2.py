@@ -131,6 +131,18 @@ def test_clip_paginates():
     assert info["truncated"] is False
 
 
+def test_clipped_markdown_keeps_a_heading_outline():
+    from dungscraper.core.clip import clip_payload
+
+    original = "# Title\n\npara\n\n## Later\n\nmore"
+    payload = {"markdown": original}
+    clip_payload(payload, max_chars=5, offset=0)
+    assert payload["outline"][0] == {"level": 1, "heading": "Title", "offset": 0}
+    assert payload["outline"][1]["heading"] == "Later"
+    assert payload["outline"][1]["offset"] == original.index("## Later")
+    assert payload["truncation"]["truncated"] is True
+
+
 def test_claude_config_paths_and_backup(tmp_path: Path):
     assert claude_config_path(platform="darwin", home=tmp_path).name == "claude_desktop_config.json"
     assert "Application Support" in str(claude_config_path(platform="darwin", home=tmp_path))

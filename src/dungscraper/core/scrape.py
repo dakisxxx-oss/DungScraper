@@ -17,12 +17,13 @@ from dungscraper.core.chunk import chunk_markdown
 from dungscraper.core.content import challenge_vendor, html_to_content, is_challenge, should_escalate
 from dungscraper.core.escalate import escalate_challenge
 from dungscraper.core.documents import docx_to_markdown, pdf_to_markdown
+from dungscraper.core.feeds import items_to_markdown, looks_like_feed, parse_feed
 from dungscraper.core.fetch import BrowserManager, RawFetch, http_fetch, make_client, sticky_proxies, sniff_kind
 from dungscraper.core.robots import RobotsGate
 from dungscraper.core.urls import clean_request_url, safe_url
 from dungscraper.errors import DungScraperError
 from dungscraper.log import get_logger
-from dungscraper.models import FORMATS, ChunkOptions, PageMetadata, ScrapeData, ScrapeRequest
+from dungscraper.models import FORMATS, ChunkOptions, LinkItem, PageMetadata, ScrapeData, ScrapeRequest
 from dungscraper.security import assert_public_url
 
 log = get_logger("dungscraper.scrape")
@@ -213,7 +214,10 @@ async def scrape_url(
                 timeout=(request.timeout_ms / 1000) if request.timeout_ms else None,
             )
             kind = sniff_kind(fetched.content, fetched.content_type, fetched.url)
-            reason = should_escalate(fetched.text or "", fetched.status_code) if kind == "html" else None
+            feed_body = fetched.text or ""
+            reason = None
+            if kind == "html" and not looks_like_feed(feed_body, fetched.content_type or "", fetched.url):
+                reason = should_escalate(feed_body, fetched.status_code)
             if reason == "js_shell" and request.render == "auto":
                 fetched.warnings.append("upgraded_to_browser:js_shell")
                 browser_fetch = await _maybe_browser(request, settings, browser_mgr)
@@ -240,7 +244,10 @@ async def scrape_url(
                 details={"status_code": fetched.status_code},
             )
         extract_started = time.perf_counter()
-        if kind in {"pdf", "docx", "text"} and kind != "html":
+        data = _from_feed(fetched, request)
+        if data is not None:
+            pass
+        elif kind in {"pdf", "docx", "text"} and kind != "html":
             if kind == "binary":
                 raise DungScraperError(
                     "unsupported_content",
@@ -298,7 +305,8 @@ async def scrape_url(
             "extract_ms": extract_ms,
         }
         data = _apply_formats(data, request.formats or ["markdown"])
-        data.fetch_tier = getattr(fetched, "tier", None) or data.fetch_tier
+        if not data.fetch_tier:
+            data.fetch_tier = getattr(fetched, "tier", None) or data.fetch_tier
         _note_block(data)
         if request.cache and settings.cache_enabled and "screenshot" not in request.formats:
             encoded = data.model_dump(mode="json")
@@ -320,6 +328,41 @@ async def scrape_url(
     finally:
         if own_client:
             await client.aclose()
+
+
+def _from_feed(fetched: RawFetch, request: ScrapeRequest) -> ScrapeData | None:
+    text = fetched.text or ""
+    if not text and fetched.content:
+        text = fetched.content.decode("utf-8", "replace")
+    if not looks_like_feed(text, fetched.content_type or "", fetched.url):
+        return None
+    title, items = parse_feed(text)
+    if not items:
+        return None
+    markdown = items_to_markdown(title or "Feed", items)
+    chunks = None
+    if "chunks" in request.formats:
+        options = request.chunk or ChunkOptions()
+        chunks = chunk_markdown(
+            markdown,
+            max_tokens=options.max_tokens,
+            overlap_tokens=options.overlap_tokens,
+            metadata={"url": fetched.url, "title": title or ""},
+        )
+    return ScrapeData(
+        url=fetched.url,
+        markdown=markdown,
+        html=None,
+        raw_html=text if "raw_html" in request.formats else None,
+        links=[LinkItem(url=item.link, text=item.title) for item in items if item.link],
+        metadata=PageMetadata(title=title or "Feed", description="RSS or Atom feed"),
+        chunks=chunks,
+        status_code=fetched.status_code,
+        content_type=fetched.content_type,
+        render_mode="rss",
+        warnings=[*fetched.warnings, "feed"],
+        fetch_tier="feed",
+    )
 
 
 def known_formats() -> set[str]:

@@ -12,8 +12,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from dungscraper import __version__
 from dungscraper.config import get_settings
+from dungscraper.adapters.reddit import build_reddit_target
 from dungscraper.core.chunk import chunk_markdown
 from dungscraper.core.clip import clip_payload
+from dungscraper.core.feeds import fetch_feed
+from dungscraper.core.fetch import make_client
 from dungscraper.core.extract import extract_structured
 from dungscraper.core.jobs import job_view, start_crawl
 from dungscraper.core.map import map_site
@@ -35,6 +38,9 @@ INSTRUCTIONS = (
     "crawl to read many pages on one site, search_web to search and read the top hits, "
     "extract to pull JSON, and chunk_text to split Markdown for retrieval. "
     "scrape tries HTTP first and uses a browser when the page needs JavaScript. "
+    "Reddit URLs work with no API key: public JSON, then RSS, then old.reddit HTML. "
+    "Use the reddit tool for a subreddit, post, search, or user. Use read_feed for RSS or Atom. "
+    "A clipped scrape includes an outline of headings and the offset to jump there. "
     "robots.txt is respected unless respect_robots is false."
 )
 
@@ -52,6 +58,8 @@ def build_mcp() -> MCPServer:
         "HTTP 403/429, empty bodies, and challenge pages. render=browser forces Chromium. "
         "only_main_content=true (default) drops nav and boilerplate; false keeps the full page. "
         "Markdown is clipped to max_chars (default 12000). Pass offset=truncation.next_offset to read the rest. "
+        "When the page has headings, outline lists each heading and the offset to jump to it. "
+        "Reddit URLs work with no API key. RSS and Atom URLs come back as feed items. "
         "For many URLs use batch_scrape. formats: markdown, html, raw_html, links, metadata, screenshot, chunks. "
         "Set respect_robots false only for a site you are allowed to access."
     ))
@@ -299,6 +307,80 @@ def build_mcp() -> MCPServer:
             metadata=body.metadata,
         )
         return _dump({"chunks": [chunk.model_dump(mode="json") for chunk in chunks]})
+
+    @mcp.tool(description=(
+        "Read Reddit with no API key. Returns a subreddit listing (hot, new, top, rising), "
+        "a post with comments, search results, or a user's posts. "
+        "Public JSON is tried first, then RSS, then old.reddit HTML. "
+        "If DUNGSCRAPER_REDDIT_CLIENT_ID and DUNGSCRAPER_REDDIT_CLIENT_SECRET are set, "
+        "the official API is used instead, and the public chain is only a fallback when that API fails. "
+        "Pass a reddit.com URL, or set subreddit, post_id, query, or username. "
+        "time_range (hour, day, week, month, year, all) applies when sort is top."
+    ))
+    async def reddit(
+        url: str = "",
+        subreddit: str = "",
+        sort: str = "hot",
+        time_range: str = "",
+        post_id: str = "",
+        query: str = "",
+        username: str = "",
+        limit: int = 25,
+        comment_depth: int = 3,
+    ) -> str:
+        try:
+            target = build_reddit_target(
+                url=url,
+                subreddit=subreddit,
+                sort=sort,
+                time_range=time_range,
+                post_id=post_id,
+                query=query,
+                username=username,
+                limit=limit,
+            )
+        except DungScraperError as exc:
+            raise ToolError(f"{exc.code}: {exc.message}") from exc
+        payload = {
+            "url": target,
+            "formats": ["markdown", "metadata"],
+            "only_main_content": True,
+            "max_comment_depth": max(0, min(int(comment_depth), 8)),
+        }
+        raw = await _dispatch("POST", "/v1/scrape", payload, None)
+        return _dump(clip_payload(json.loads(raw), max_chars=12000))
+
+    @mcp.tool(description=(
+        "Read an RSS or Atom feed into a list of items (title, link, author, published, summary). "
+        "Use this for blogs, release notes, and news feeds. scrape also detects feed URLs. "
+        "respect_robots defaults to true. Set it false only for a feed you are allowed to read."
+    ))
+    async def read_feed(url: str, limit: int = 20, respect_robots: bool = True) -> str:
+        try:
+            if os.environ.get("DUNGSCRAPER_BASE_URL") and current() is None:
+                settings = get_settings()
+                async with make_client(settings) as client:
+                    data = await fetch_feed(
+                        url,
+                        settings=settings,
+                        client=client,
+                        limit=limit,
+                        respect_robots=respect_robots,
+                    )
+            else:
+                services = current()
+                if services is None:
+                    services = await startup(get_settings())
+                data = await fetch_feed(
+                    url,
+                    settings=services.settings,
+                    client=services.client,
+                    limit=limit,
+                    respect_robots=respect_robots,
+                )
+        except DungScraperError as exc:
+            raise ToolError(f"{exc.code}: {exc.message}") from exc
+        return _dump(data)
 
     return mcp
 
