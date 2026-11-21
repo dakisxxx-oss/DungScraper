@@ -4,15 +4,18 @@ Order:
 
 1. Official OAuth, only when client id and secret are set. A working token
    stays on this path.
-2. Public JSON (``old.reddit.com``, then ``www.reddit.com``, then
-   ``np.reddit.com``). Same fields as the API: score, author, selftext,
-   nested comments. One shared gap between requests, one retry on HTTP 429,
-   and a Chrome-impersonated retry when the datacenter IP is blocked.
-3. RSS/Atom for the same resource.
-4. ``old.reddit.com`` HTML, parsed from the ``thing`` markup.
+2. Public JSON, then RSS, then old.reddit HTML. A login redirect, HTTP 403,
+   or a JavaScript interstitial is a miss, not a fatal error. A bad
+   ``Content-Encoding`` is retried once uncompressed and then skipped.
+3. Arctic Shift's keyless archive API (posts by subreddit, author, or query;
+   one post by id; comments by ``link_id``). Scores can be stale and the
+   newest posts can lag by a few minutes. PullPush is not used.
+4. Headless Chromium, only when Playwright's browser is installed, to get
+   past www.reddit.com's JavaScript check and read ``shreddit-post`` /
+   ``shreddit-comment``. Otherwise the error tells you to run
+   ``python -m playwright install chromium``.
 
-Third-party mirrors (redlib, pullpush, and similar) are not used. They
-disappear often enough that a failure there is worse than a clear error.
+A failure in one step never aborts the rest of the chain.
 
 A 429 with a long ``Retry-After`` stops the chain instead of walking every
 host. Block pages (403) try the next host and the next format.
@@ -21,6 +24,8 @@ host. Block pages (403) try the next host and the next format.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -29,6 +34,7 @@ from bs4 import BeautifulSoup
 
 from dungscraper.config import Settings
 from dungscraper.core.feeds import FeedItem, parse_feed
+from dungscraper.core.fetch import read_response_text
 from dungscraper.errors import DungScraperError
 from dungscraper.models import PageMetadata, ScrapeData, ScrapeRequest
 
@@ -45,6 +51,10 @@ PUBLIC_UA = (
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 JSON_HOSTS = ("https://old.reddit.com", "https://www.reddit.com", "https://np.reddit.com")
+ARCTIC_SHIFT = "https://arctic-shift.photon-reddit.com"
+ARCTIC_POST_FIELDS = "id,title,author,score,created_utc,subreddit,num_comments,selftext,url"
+ARCTIC_COMMENT_FIELDS = "id,body,author,score,created_utc,parent_id,link_id"
+PLAYWRIGHT_INSTALL = "python -m playwright install chromium"
 MAX_BACKOFF_S = 8.0
 _SORTS = {"hot", "new", "top", "rising"}
 _TIMES = {"hour", "day", "week", "month", "year", "all"}
@@ -465,6 +475,15 @@ def _public_headers(settings: Settings, accept: str) -> dict[str, str]:
         "User-Agent": public_user_agent(settings),
         "Accept": accept,
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate",
+    }
+
+
+def _arctic_headers() -> dict[str, str]:
+    return {
+        "User-Agent": "dungscraper/0.3.1 (+https://github.com/dakisxxx-oss/DungScraper)",
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip, deflate",
     }
 
 
@@ -479,6 +498,7 @@ async def _fetch_public(
     html_params = _query_params(parsed, request, json_mode=False)
     attempts: list[str] = []
     impersonated = False
+    paused = False
     json_headers = _public_headers(settings, "application/json,text/javascript;q=0.9,*/*;q=0.1")
     for host in JSON_HOSTS:
         url = host + path + ".json"
@@ -488,6 +508,9 @@ async def _fetch_public(
             attempts.append(f"{host} json: {exc}")
             continue
         rendered = _take_json(response, parsed, request, attempts, host)
+        if rendered == "rate-stop":
+            paused = True
+            break
         if rendered == "stop":
             continue
         if rendered is not None:
@@ -500,6 +523,9 @@ async def _fetch_public(
                 attempts.append("impersonate: unavailable")
             else:
                 rendered = _take_json(alternate, parsed, request, attempts, f"impersonate {host}")
+                if rendered == "rate-stop":
+                    paused = True
+                    break
                 if rendered is not None and rendered != "stop":
                     if "reddit_impersonate" not in rendered.warnings:
                         rendered.warnings.append("reddit_impersonate")
@@ -508,7 +534,7 @@ async def _fetch_public(
         settings,
         "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.1",
     )
-    for host in JSON_HOSTS:
+    for host in JSON_HOSTS if not paused else []:
         rss_path = path + ".rss" if parsed["kind"] == "search" else path + "/.rss"
         url = host + rss_path
         try:
@@ -516,10 +542,16 @@ async def _fetch_public(
         except _TransportFailure as exc:
             attempts.append(f"{host} rss: {exc}")
             continue
+        if _login_wall(response):
+            attempts.append(f"{host} rss: login redirect")
+            continue
         if _stops(response):
-            _raise_access_or_rate(response, parsed)
-        if response.status_code == 200:
-            markdown, title = _render_feed(response.text, parsed)
+            attempts.append(f"{host} rss: {_stop_label(response)}")
+            if _long_rate_limit(response):
+                break
+            continue
+        if response.status_code == 200 and not _interstitial(read_response_text(response)):
+            markdown, title = _render_feed(read_response_text(response), parsed)
             if markdown:
                 return _package(
                     request,
@@ -536,16 +568,22 @@ async def _fetch_public(
         attempts.append(f"{host} rss: HTTP {response.status_code}")
     html_headers = _public_headers(settings, "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8")
     html_url = "https://old.reddit.com" + path
-    try:
-        response = await _request(client, html_url, headers=html_headers, params=html_params, settings=settings)
-    except _TransportFailure as exc:
-        attempts.append(f"old.reddit.com html: {exc}")
-    else:
-        if _stops(response):
-            _raise_access_or_rate(response, parsed)
-        if response.status_code == 200:
+    response = None
+    if not paused:
+        try:
+            response = await _request(client, html_url, headers=html_headers, params=html_params, settings=settings)
+        except _TransportFailure as exc:
+            attempts.append(f"old.reddit.com html: {exc}")
+    if response is not None:
+        if _login_wall(response):
+            attempts.append("old.reddit.com html: login redirect")
+        elif _stops(response):
+            attempts.append(f"old.reddit.com html: {_stop_label(response)}")
+        elif response.status_code == 200 and _interstitial(read_response_text(response)):
+            attempts.append("old.reddit.com html: interstitial")
+        elif response.status_code == 200:
             try:
-                markdown, title = _render_html(response.text, parsed, request)
+                markdown, title = _render_html(read_response_text(response), parsed, request)
             except _BadPayload as exc:
                 attempts.append(f"old.reddit.com html: {exc}")
             else:
@@ -561,12 +599,31 @@ async def _fetch_public(
                 )
         else:
             attempts.append(f"old.reddit.com html: HTTP {response.status_code}")
-    raise _unavailable(attempts)
+    try:
+        archived = await _fetch_arctic(client, settings, request, parsed, attempts)
+    except Exception as exc:
+        attempts.append(f"arctic shift: {type(exc).__name__}: {exc}")
+        archived = None
+    if archived is not None:
+        return archived
+    browser_missing = False
+    try:
+        rendered, browser_missing = await _fetch_browser(settings, request, parsed, attempts)
+    except Exception as exc:
+        attempts.append(f"browser: {type(exc).__name__}: {exc}")
+        rendered = None
+    if rendered is not None:
+        return rendered
+    raise _unavailable(attempts, browser_missing=browser_missing)
 
 
 def _take_json(response: httpx.Response, parsed: dict, request: ScrapeRequest, attempts: list[str], label: str):
+    if _login_wall(response):
+        attempts.append(f"{label}: login redirect")
+        return None
     if _stops(response):
-        _raise_access_or_rate(response, parsed)
+        attempts.append(f"{label}: {_stop_label(response)}")
+        return "rate-stop" if _long_rate_limit(response) else None
     if response.status_code == 200 and _looks_json(response):
         try:
             markdown, title = _render_json(response.json(), parsed, request)
@@ -616,14 +673,17 @@ async def _request(
         await GATE.wait(settings.reddit_min_interval_seconds)
         try:
             response = await client.get(url, headers=headers, params=params, timeout=20)
+        except httpx.DecodingError as exc:
+            last_error = exc
+            if attempt == 0 and str(headers.get("Accept-Encoding", "")).lower() != "identity":
+                headers = {**headers, "Accept-Encoding": "identity"}
+                continue
+            break
         except httpx.HTTPError as exc:
             last_error = exc
             break
-        if _rate_limited(response) and attempt == 0:
-            wait = _retry_after_seconds(response)
-            if wait > MAX_BACKOFF_S:
-                raise _rate_error(response)
-            await GATE.penalize(wait)
+        if _rate_limited(response) and attempt == 0 and not _long_rate_limit(response):
+            await GATE.penalize(_retry_after_seconds(response))
             continue
         return response
     if response is not None:
@@ -656,14 +716,69 @@ def _retry_after_seconds(response: httpx.Response) -> float:
 def _rate_limited(response: httpx.Response) -> bool:
     if response.status_code == 429:
         return True
-    if response.status_code == 200 and _looks_json(response):
+    sample = read_response_text(response)[:500].lower()
+    if response.status_code == 200 and sample.lstrip()[:1] in {"{", "["}:
         return False
-    sample = (response.text or "")[:500].lower()
-    return "too many requests" in sample or "whoa there" in sample
+    return "too many requests" in sample or "whoa there" in sample or "slow down" in sample
+
+
+def _long_rate_limit(response: httpx.Response) -> bool:
+    return _rate_limited(response) and _retry_after_seconds(response) > MAX_BACKOFF_S
+
+
+def _stop_label(response: httpx.Response) -> str:
+    reason = _access_reason(response)
+    if reason:
+        return reason
+    if response.status_code == 429:
+        return "HTTP 429"
+    return f"HTTP {response.status_code}"
+
+
+def _login_wall(response: httpx.Response) -> bool:
+    try:
+        final = str(getattr(response, "url", "") or "")
+    except Exception:
+        final = ""
+    if _login_path(final):
+        return True
+    try:
+        location = str(response.headers.get("location") or "")
+    except Exception:
+        location = ""
+    if "/login" in location.lower():
+        return True
+    for hop in getattr(response, "history", None) or []:
+        try:
+            hop_url = str(getattr(hop, "url", "") or "")
+            hop_location = str(hop.headers.get("location") or "")
+        except Exception:
+            continue
+        if _login_path(hop_url) or "/login" in hop_location.lower():
+            return True
+    return False
+
+
+def _login_path(url: str) -> bool:
+    path = urlsplit(url).path.lower()
+    return path == "/login" or path.startswith("/login/")
+
+
+def _interstitial(text: str) -> bool:
+    lowered = (text or "").lower()
+    if "shreddit-post" in lowered or "shreddit-comment" in lowered:
+        return False
+    if 'class="thing' in lowered or "class='thing" in lowered:
+        return False
+    if len(text or "") > 30000:
+        return False
+    return "<script" in lowered or any(
+        token in lowered for token in ("verify your browser", "just a moment", "enable javascript", "logging you in")
+    )
 
 
 def _looks_json(response: httpx.Response) -> bool:
-    text = (response.text or "").lstrip()
+    text = read_response_text(response).lstrip()
     return text.startswith("{") or text.startswith("[")
 
 
@@ -671,7 +786,7 @@ def _access_reason(response: httpx.Response) -> str | None:
     if not _looks_json(response):
         return None
     try:
-        payload = response.json()
+        payload = json.loads(read_response_text(response))
     except Exception:
         return None
     if not isinstance(payload, dict):
@@ -722,7 +837,7 @@ def _rate_error(response: httpx.Response) -> DungScraperError:
     )
 
 
-def _unavailable(attempts: list[str]) -> DungScraperError:
+def _unavailable(attempts: list[str], *, browser_missing: bool = False) -> DungScraperError:
     if attempts and all("429" in item for item in attempts):
         return DungScraperError(
             "reddit_rate_limited",
@@ -735,10 +850,12 @@ def _unavailable(attempts: list[str]) -> DungScraperError:
     note = ""
     if blocked:
         note = " Datacenter and cloud IPs are often blocked; a home connection usually works."
+    if browser_missing:
+        note += f" Headless Chromium was not installed, so the browser step was skipped. Run: {PLAYWRIGHT_INSTALL}"
     return DungScraperError(
         "reddit_unavailable",
-        "Reddit did not return a readable page. Tried public JSON on old.reddit.com, "
-        "www.reddit.com, and np.reddit.com, then RSS, then old.reddit HTML. "
+        "Reddit did not return a readable page. Tried public JSON, RSS, and old.reddit HTML, "
+        "then the Arctic Shift archive, then headless Chromium when it is installed. "
         f"Last attempts: {tail}.{note} No API key is required.",
         status=502,
         details={"attempts": attempts[-8:]},
@@ -755,6 +872,11 @@ def _package(
     warnings: list[str],
     fetch_tier: str,
 ) -> ScrapeData:
+    for warning in warnings:
+        line = _SOURCE_LINES.get(warning)
+        if line:
+            markdown = _stamp(markdown, line)
+            break
     return ScrapeData(
         url=request.url,
         markdown=markdown,
@@ -765,6 +887,26 @@ def _package(
         warnings=list(warnings),
         fetch_tier=fetch_tier,
     )
+
+
+_SOURCE_LINES = {
+    "reddit_json": "Source: Reddit public JSON.",
+    "reddit_rss": "Source: Reddit RSS.",
+    "reddit_html": "Source: old.reddit.com HTML.",
+    "reddit_api": "Source: Reddit official API.",
+    "reddit_arctic_shift": (
+        "Source: Arctic Shift archive. Scores may be stale and the newest posts can lag by a few minutes."
+    ),
+    "reddit_browser": "Source: www.reddit.com via headless Chromium.",
+}
+
+
+def _stamp(markdown: str, line: str) -> str:
+    head, sep, rest = markdown.partition("\n")
+    stamped = head + f"\n\n_{line}_"
+    if sep:
+        return stamped + "\n" + rest
+    return stamped
 
 
 def _render_json(payload: object, parsed: dict, request: ScrapeRequest) -> tuple[str, str]:
@@ -1008,8 +1150,420 @@ async def _impersonated_get(url: str, params: dict[str, str]) -> httpx.Response 
     except Exception:
         return None
     content = getattr(response, "content", None) or b""
-    header_items = dict(getattr(response, "headers", {}) or {})
+    header_items = {
+        key: value
+        for key, value in dict(getattr(response, "headers", {}) or {}).items()
+        if str(key).lower() not in {"content-encoding", "content-length", "transfer-encoding"}
+    }
+    if content[:2] == b"\x1f\x8b":
+        import gzip
+
+        try:
+            content = gzip.decompress(content)
+        except Exception:
+            pass
     return httpx.Response(int(response.status_code), content=content, headers=header_items)
+
+
+async def _fetch_arctic(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    request: ScrapeRequest,
+    parsed: dict,
+    attempts: list[str],
+) -> ScrapeData | None:
+    params = _arctic_params(parsed, request)
+    if params is None:
+        attempts.append("arctic shift: nothing to query")
+        return None
+    path, query = params
+    try:
+        response = await _request(
+            client,
+            ARCTIC_SHIFT + path,
+            headers=_arctic_headers(),
+            params=query,
+            settings=settings,
+        )
+    except _TransportFailure as exc:
+        attempts.append(f"arctic shift: {exc}")
+        return None
+    if _rate_limited(response) or response.status_code >= 400:
+        attempts.append(f"arctic shift: HTTP {response.status_code}")
+        return None
+    try:
+        payload = json.loads(read_response_text(response) or "{}")
+    except json.JSONDecodeError:
+        attempts.append("arctic shift: not json")
+        return None
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        attempts.append("arctic shift: empty")
+        return None
+    if parsed["kind"] == "post":
+        post = _arctic_post(rows[0])
+        comments = await _arctic_comments(client, settings, parsed, attempts)
+        lines = [format_post(post), "", "## Comments"]
+        wrote = False
+        for node in comments:
+            rendered = format_comment(node, 0, request.max_comment_depth)
+            if rendered:
+                wrote = True
+                lines.extend(rendered)
+        if not wrote:
+            lines.append("_No comments in the archive._")
+        markdown = "\n".join(lines).strip()
+        title = str(post.get("title") or "Reddit")
+    else:
+        children = [_arctic_child(row) for row in rows]
+        children = [child for child in children if child]
+        heading = _heading(parsed)
+        markdown = format_listing(children, heading=heading)
+        title = heading
+    return _package(
+        request,
+        markdown,
+        title,
+        "Reddit via the Arctic Shift archive. No API key.",
+        "api",
+        "application/json",
+        ["reddit_arctic_shift"],
+        "reddit_arctic_shift",
+    )
+
+
+def _arctic_params(parsed: dict, request: ScrapeRequest) -> tuple[str, dict[str, str]] | None:
+    limit = _bounded_limit(parsed, request)
+    if parsed["kind"] == "post" and parsed.get("post_id"):
+        return "/api/posts/ids", {"ids": str(parsed["post_id"])}
+    if parsed["kind"] == "search":
+        query = {"limit": str(limit), "sort": "desc", "fields": ARCTIC_POST_FIELDS}
+        if parsed.get("search"):
+            query["query"] = str(parsed["search"])
+        if parsed.get("subreddit"):
+            query["subreddit"] = str(parsed["subreddit"])
+        if "query" not in query and "subreddit" not in query:
+            return None
+        return "/api/posts/search", query
+    if parsed["kind"] == "user" and parsed.get("username"):
+        if parsed.get("section") == "comments":
+            return "/api/comments/search", {
+                "author": str(parsed["username"]),
+                "limit": str(limit),
+                "sort": "desc",
+                "fields": ARCTIC_COMMENT_FIELDS,
+            }
+        return "/api/posts/search", {
+            "author": str(parsed["username"]),
+            "limit": str(limit),
+            "sort": "desc",
+            "fields": ARCTIC_POST_FIELDS,
+        }
+    if parsed["kind"] == "subreddit" and parsed.get("subreddit"):
+        return "/api/posts/search", {
+            "subreddit": str(parsed["subreddit"]),
+            "limit": str(limit),
+            "sort": "desc",
+            "fields": ARCTIC_POST_FIELDS,
+        }
+    return None
+
+
+def _bounded_limit(parsed: dict, request: ScrapeRequest) -> int:
+    raw = parsed.get("limit") or (100 if parsed.get("kind") == "post" else 25)
+    try:
+        return max(1, min(int(raw), 100))
+    except (TypeError, ValueError):
+        return 25
+
+
+async def _arctic_comments(
+    client: httpx.AsyncClient,
+    settings: Settings,
+    parsed: dict,
+    attempts: list[str],
+) -> list[dict]:
+    post_id = str(parsed.get("post_id") or "")
+    if not post_id:
+        return []
+    try:
+        response = await _request(
+            client,
+            ARCTIC_SHIFT + "/api/comments/search",
+            headers=_arctic_headers(),
+            params={
+                "link_id": f"t3_{post_id}",
+                "limit": "100",
+                "sort": "desc",
+                "fields": ARCTIC_COMMENT_FIELDS,
+            },
+            settings=settings,
+        )
+    except _TransportFailure as exc:
+        attempts.append(f"arctic shift comments: {exc}")
+        return []
+    if response.status_code >= 400:
+        attempts.append(f"arctic shift comments: HTTP {response.status_code}")
+        return []
+    try:
+        payload = json.loads(read_response_text(response) or "{}")
+    except json.JSONDecodeError:
+        return []
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return _comment_tree(rows, post_id)
+
+
+def _arctic_post(row: dict) -> dict:
+    subreddit = row.get("subreddit") or ""
+    post_id = row.get("id") or ""
+    url = row.get("url") or ""
+    selftext = row.get("selftext") or ""
+    permalink = f"/r/{subreddit}/comments/{post_id}/" if subreddit and post_id else ""
+    is_self = bool(selftext) and (not url or "reddit.com" in url)
+    return {
+        "title": row.get("title") or "(untitled)",
+        "author": row.get("author") or "[deleted]",
+        "score": row.get("score", 0),
+        "subreddit": subreddit,
+        "permalink": permalink,
+        "is_self": is_self,
+        "selftext": selftext if selftext != "[removed]" else "",
+        "url": "" if is_self else url,
+        "created_utc": row.get("created_utc"),
+        "num_comments": row.get("num_comments"),
+    }
+
+
+def _arctic_child(row: dict) -> dict | None:
+    if not isinstance(row, dict):
+        return None
+    if row.get("body") and not row.get("title"):
+        return {
+            "kind": "t1",
+            "data": {
+                "author": row.get("author") or "[deleted]",
+                "score": row.get("score", 0),
+                "body": row.get("body") or "",
+                "permalink": "",
+            },
+        }
+    post = _arctic_post(row)
+    return {"kind": "t3", "data": post}
+
+
+def _comment_tree(rows: list[dict], post_id: str) -> list[dict]:
+    nodes: dict[str, dict] = {}
+    ordered: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("id"):
+            continue
+        node = {
+            "kind": "t1",
+            "data": {
+                "author": row.get("author") or "[deleted]",
+                "score": row.get("score", 0),
+                "body": row.get("body") or "",
+                "replies": "",
+                "_parent": str(row.get("parent_id") or ""),
+            },
+        }
+        nodes[str(row["id"])] = node
+        ordered.append(node)
+    roots: list[dict] = []
+    for node in ordered:
+        parent = node["data"].pop("_parent", "")
+        parent_id = parent[3:] if parent.startswith("t1_") else ""
+        if parent_id and parent_id in nodes and parent_id != node:
+            replies = nodes[parent_id]["data"].get("replies")
+            if not isinstance(replies, dict):
+                replies = {"kind": "Listing", "data": {"children": []}}
+                nodes[parent_id]["data"]["replies"] = replies
+            replies["data"]["children"].append(node)
+        else:
+            roots.append(node)
+    return roots
+
+
+async def chromium_installed() -> bool:
+    """True when Playwright can launch its downloaded Chromium."""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return False
+    try:
+        playwright = await async_playwright().start()
+    except Exception:
+        return False
+    try:
+        path = playwright.chromium.executable_path
+        return bool(path and os.path.exists(path))
+    except Exception:
+        return False
+    finally:
+        await playwright.stop()
+
+
+async def _fetch_browser(
+    settings: Settings,
+    request: ScrapeRequest,
+    parsed: dict,
+    attempts: list[str],
+) -> tuple[ScrapeData | None, bool]:
+    if not await chromium_installed():
+        attempts.append("browser: chromium not installed")
+        return None, True
+    try:
+        payload = await _read_shreddit(settings, parsed, request)
+    except Exception as exc:
+        attempts.append(f"browser: {type(exc).__name__}: {exc}")
+        return None, False
+    if not payload or not (payload.get("posts") or payload.get("comments")):
+        attempts.append("browser: no shreddit posts")
+        return None, False
+    markdown, title = markdown_from_shreddit(payload, parsed, request)
+    if not markdown:
+        attempts.append("browser: empty page")
+        return None, False
+    return (
+        _package(
+            request,
+            markdown,
+            title,
+            "Reddit via headless Chromium.",
+            "browser",
+            "text/html",
+            ["reddit_browser"],
+            "reddit_browser",
+        ),
+        False,
+    )
+
+
+def markdown_from_shreddit(payload: dict, parsed: dict, request: ScrapeRequest) -> tuple[str, str]:
+    posts = [item for item in (payload.get("posts") or []) if isinstance(item, dict)]
+    comments = [item for item in (payload.get("comments") or []) if isinstance(item, dict)]
+    if parsed["kind"] == "post" and posts:
+        post = posts[0]
+        data = {
+            "title": post.get("title") or "(untitled)",
+            "author": post.get("author") or "[deleted]",
+            "score": _as_int(post.get("score")),
+            "subreddit": post.get("subreddit") or parsed.get("subreddit"),
+            "is_self": True,
+            "selftext": post.get("body") or "",
+            "permalink": post.get("permalink") or "",
+        }
+        lines = [format_post(data), "", "## Comments"]
+        wrote = False
+        for comment in comments:
+            depth = _as_int(comment.get("depth"))
+            if depth > request.max_comment_depth:
+                continue
+            indent = "  " * depth
+            author = comment.get("author") or "[deleted]"
+            body = " ".join(str(comment.get("body") or "").split())
+            lines.append(f"{indent}- **u/{author}** ({_as_int(comment.get('score'))}): {body}")
+            wrote = True
+        if not wrote:
+            lines.append("_No comments._")
+        return "\n".join(lines).strip(), str(data["title"])
+    heading = _heading(parsed)
+    children = []
+    for post in posts:
+        permalink = str(post.get("permalink") or "")
+        if permalink and not permalink.startswith("/"):
+            permalink = "/" + permalink
+        children.append(
+            {
+                "kind": "t3",
+                "data": {
+                    "title": post.get("title") or "(untitled)",
+                    "author": post.get("author") or "[deleted]",
+                    "score": _as_int(post.get("score")),
+                    "permalink": permalink,
+                },
+            }
+        )
+    if not children and comments:
+        for comment in comments:
+            children.append(
+                {
+                    "kind": "t1",
+                    "data": {
+                        "author": comment.get("author") or "[deleted]",
+                        "score": _as_int(comment.get("score")),
+                        "body": comment.get("body") or "",
+                        "permalink": "",
+                    },
+                }
+            )
+    if not children:
+        return "", heading
+    return format_listing(children, heading=heading), heading
+
+
+def _as_int(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+_SHREDDIT_JS = """
+() => {
+  const ownText = (el) => {
+    const holder = document.createElement("div");
+    holder.innerHTML = el.innerHTML || "";
+    holder.querySelectorAll("shreddit-comment, shreddit-post").forEach((node) => node.remove());
+    const slot = holder.querySelector("[slot='comment'], [slot='text-body'], .md");
+    const raw = (slot && (slot.innerText || slot.textContent)) || holder.innerText || holder.textContent || "";
+    return raw.replace(/\\s+/g, " ").trim().slice(0, 2000);
+  };
+  const posts = [...document.querySelectorAll("shreddit-post")].map((el) => ({
+    title: el.getAttribute("post-title") || "",
+    author: el.getAttribute("author") || "",
+    score: el.getAttribute("score") || "0",
+    permalink: el.getAttribute("permalink") || el.getAttribute("content-href") || "",
+    subreddit: (el.getAttribute("subreddit-name") || "").replace(/^r\\//, ""),
+    body: ownText(el),
+  }));
+  const comments = [...document.querySelectorAll("shreddit-comment")].map((el) => ({
+    author: el.getAttribute("author") || "",
+    score: el.getAttribute("score") || "0",
+    depth: el.getAttribute("depth") || "0",
+    body: ownText(el),
+  }));
+  return {posts, comments};
+}
+"""
+
+
+async def _read_shreddit(settings: Settings, parsed: dict, request: ScrapeRequest) -> dict | None:
+    from playwright.async_api import async_playwright
+
+    playwright = await async_playwright().start()
+    browser = None
+    try:
+        browser = await playwright.chromium.launch(headless=True, args=["--disable-dev-shm-usage", "--no-sandbox"])
+        page = await browser.new_page(user_agent=settings.fetch_user_agent, locale="en-US")
+        url = "https://www.reddit.com" + _resource_path(parsed)
+        await page.goto(url, wait_until="domcontentloaded", timeout=int(request.timeout_ms or 25000))
+        if _login_path(page.url):
+            return None
+        try:
+            await page.wait_for_selector("shreddit-post", timeout=8000)
+        except Exception:
+            pass
+        payload = await page.evaluate(_SHREDDIT_JS)
+        if isinstance(payload, dict):
+            return payload
+        return None
+    finally:
+        if browser is not None:
+            await browser.close()
+        await playwright.stop()
 
 
 async def _fetch_oauth(

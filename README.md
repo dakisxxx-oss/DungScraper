@@ -12,7 +12,7 @@ Self-hosted web scraping and crawling for AI agents. One tool turns a URL into M
 - **Public company info.** Business emails with the page where each was found, and job links tagged junior and remote.
 - **Polite.** Respects robots.txt.
 
-Version 0.3.0 keeps the 0.2.0 contacts and jobs tools and reads Reddit with no API key.
+Version 0.3.1 keeps the 0.2.0 contacts and jobs tools and reads Reddit with no API key.
 
 ## Kas naujo
 
@@ -143,9 +143,9 @@ curl -s http://127.0.0.1:8741/v1/scrape \
 Reddit works with no API key. A subreddit listing (`hot`, `new`, `top`, `rising`), a post and its comments, a search, or a user page is read in this order:
 
 1. The official OAuth API, only when `DUNGSCRAPER_REDDIT_CLIENT_ID` and `DUNGSCRAPER_REDDIT_CLIENT_SECRET` are both set. If that call fails, the public chain below is the fallback.
-2. Public JSON on `old.reddit.com`, then `www.reddit.com`, then `np.reddit.com`. Requests share a gap (`DUNGSCRAPER_REDDIT_MIN_INTERVAL_SECONDS`, default 1.25). HTTP 429 waits for `Retry-After` up to 8 seconds and retries once.
-3. The same resource as RSS.
-4. `old.reddit.com` HTML.
+2. Public JSON on `old.reddit.com`, then `www.reddit.com`, then `np.reddit.com`, then RSS and old.reddit HTML. A redirect to `/login`, HTTP 403, or a JavaScript interstitial is skipped. Requests share a gap (`DUNGSCRAPER_REDDIT_MIN_INTERVAL_SECONDS`, default 1.25). A bad `Content-Encoding` is retried once uncompressed.
+3. The Arctic Shift archive (`arctic-shift.photon-reddit.com`) for posts by subreddit, author, or query, a post by id, and comments by `link_id`. Scores may be stale and the newest posts can lag by a few minutes.
+4. Headless Chromium, only when it is installed (`python -m playwright install chromium`), to read `shreddit-post` and `shreddit-comment` after Reddit's JavaScript check.
 
 Optional keys, if you already have a script app:
 

@@ -122,8 +122,13 @@ POST_HTML = """
 
 
 @pytest.fixture(autouse=True)
-def _reset_reddit_state():
+def _reset_reddit_state(monkeypatch):
     reset_reddit_throttle()
+
+    async def no_browser() -> bool:
+        return False
+
+    monkeypatch.setattr(reddit_mod, "chromium_installed", no_browser)
     yield
     reset_reddit_throttle()
 
@@ -288,7 +293,8 @@ async def test_private_and_missing_stop_the_chain():
 
     with pytest.raises(DungScraperError) as caught:
         await _scrape("https://www.reddit.com/r/secrets/", private)
-    assert caught.value.code == "reddit_private"
+    assert caught.value.code == "reddit_unavailable"
+    assert "private" in caught.value.message
     assert "not configured" not in caught.value.message.lower()
 
     def missing(request: httpx.Request) -> httpx.Response:
@@ -296,24 +302,42 @@ async def test_private_and_missing_stop_the_chain():
 
     with pytest.raises(DungScraperError) as gone:
         await _scrape("https://www.reddit.com/r/nope/", missing)
-    assert gone.value.code == "reddit_not_found"
+    assert gone.value.code == "reddit_unavailable"
+    assert "missing" in gone.value.message
 
 
 @pytest.mark.asyncio
-async def test_long_retry_after_is_reported_and_not_hammered():
-    calls = {"n": 0}
+async def test_long_retry_after_stops_reddit_and_uses_the_archive():
+    reddit_calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        calls["n"] += 1
+        if request.url.host == "arctic-shift.photon-reddit.com":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "abc",
+                            "title": "From archive",
+                            "author": "ada",
+                            "score": 4,
+                            "subreddit": "Python",
+                            "created_utc": 1700000000,
+                            "num_comments": 0,
+                            "selftext": "Body",
+                            "url": "https://www.reddit.com/r/Python/comments/abc/from_archive/",
+                        }
+                    ]
+                },
+            )
+        reddit_calls["n"] += 1
         return httpx.Response(429, text="too many requests", headers={"Retry-After": "60"})
 
-    with pytest.raises(DungScraperError) as caught:
-        await _scrape("https://www.reddit.com/r/Python/", handler)
-    assert caught.value.code == "reddit_rate_limited"
-    assert "60" in caught.value.message
-    assert "No API key is required" in caught.value.message
-    assert "not configured" not in caught.value.message.lower()
-    assert calls["n"] == 1
+    data = await _scrape("https://www.reddit.com/r/Python/", handler)
+    assert reddit_calls["n"] == 1
+    assert data.fetch_tier == "reddit_arctic_shift"
+    assert "From archive" in data.markdown
+    assert "Arctic Shift" in data.markdown
 
 
 @pytest.mark.asyncio
@@ -368,7 +392,8 @@ async def test_all_public_methods_fail_clearly():
         await _scrape("https://www.reddit.com/r/Python/", handler)
     assert caught.value.code == "reddit_unavailable"
     message = caught.value.message
-    assert "JSON" in message and "RSS" in message and "HTML" in message
+    assert "JSON" in message and "Arctic Shift" in message
+    assert "python -m playwright install chromium" in message
     assert "not configured" not in message.lower()
     assert "No API key is required" in message
 
@@ -449,6 +474,149 @@ async def test_unsupported_reddit_url_is_explicit():
         await _scrape("https://www.reddit.com/r/Python/wiki/index", handler)
     assert caught.value.code == "reddit_unsupported"
     assert "not configured" not in caught.value.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_decode_error_and_login_redirect_fall_through_to_arctic_shift():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "arctic-shift.photon-reddit.com":
+            assert request.headers["user-agent"].startswith("dungscraper/")
+            assert request.url.params["subreddit"] == "ObsidianMD"
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "zz",
+                            "title": "Archive hello",
+                            "author": "ada",
+                            "score": 9,
+                            "subreddit": "ObsidianMD",
+                            "created_utc": 1700000000,
+                            "num_comments": 1,
+                            "selftext": "Notes",
+                            "url": "https://www.reddit.com/r/ObsidianMD/comments/zz/archive_hello/",
+                        }
+                    ]
+                },
+            )
+        if request.url.params.get("raw_json") == "1" and request.headers.get("accept-encoding") != "identity":
+            raise httpx.DecodingError(
+                "Error -3 while decompressing data: incorrect header check",
+                request=request,
+            )
+        return httpx.Response(
+            302,
+            headers={"location": "https://old.reddit.com/login/?reason=lor2"},
+        )
+
+    data = await _scrape("https://www.reddit.com/r/ObsidianMD/hot/", handler)
+    assert data.fetch_tier == "reddit_arctic_shift"
+    assert "Archive hello" in data.markdown
+    assert "Arctic Shift" in data.markdown
+
+
+@pytest.mark.asyncio
+async def test_arctic_shift_loads_a_post_and_its_comments():
+    def handler(request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        if host.endswith("reddit.com") and not host.startswith("arctic-shift") and request.headers.get("accept-encoding") != "identity":
+            return httpx.Response(403, text="<html>blocked</html>")
+        if request.url.path == "/api/posts/ids":
+            assert request.url.params["ids"] == "abc123"
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "abc123",
+                            "title": "Hello",
+                            "author": "ada",
+                            "score": 3,
+                            "subreddit": "Python",
+                            "created_utc": 1700000000,
+                            "num_comments": 1,
+                            "selftext": "Body text",
+                            "url": "https://www.reddit.com/r/Python/comments/abc123/hello/",
+                        }
+                    ]
+                },
+            )
+        if request.url.path == "/api/comments/search":
+            assert request.url.params["link_id"] == "t3_abc123"
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "c1", "body": "A reply", "author": "grace", "score": 2, "parent_id": "t3_abc123"},
+                        {"id": "c2", "body": "Nested", "author": "linus", "score": 1, "parent_id": "t1_c1"},
+                    ]
+                },
+            )
+        return httpx.Response(404, text="no")
+
+    data = await _scrape("https://www.reddit.com/r/Python/comments/abc123/hello/", handler)
+    assert "Body text" in data.markdown
+    assert "u/grace" in data.markdown
+    assert "u/linus" in data.markdown
+    assert data.fetch_tier == "reddit_arctic_shift"
+
+
+def test_shreddit_listing_marks_the_browser_source():
+    from dungscraper.adapters.reddit import markdown_from_shreddit
+
+    markdown, title = markdown_from_shreddit(
+        {
+            "posts": [
+                {
+                    "title": "Hello",
+                    "author": "ada",
+                    "score": "4",
+                    "permalink": "/r/Python/comments/abc/hello/",
+                    "subreddit": "Python",
+                    "body": "",
+                }
+            ],
+            "comments": [],
+        },
+        {"kind": "subreddit", "subreddit": "Python", "sort": "hot", "t": None, "search": None, "username": None, "section": None},
+        ScrapeRequest(url="https://www.reddit.com/r/Python/", cache=False),
+    )
+    assert title.startswith("r/Python")
+    assert "Hello" in markdown
+    assert "u/ada" in markdown
+
+
+@pytest.mark.asyncio
+async def test_browser_step_runs_only_when_chromium_is_installed(monkeypatch):
+    async def browser_ready() -> bool:
+        return True
+
+    async def fake_read(settings, parsed, request):
+        return {
+            "posts": [
+                {
+                    "title": "Rendered",
+                    "author": "ada",
+                    "score": "1",
+                    "permalink": "/r/Python/comments/abc/rendered/",
+                    "subreddit": "Python",
+                    "body": "",
+                }
+            ],
+            "comments": [],
+        }
+
+    monkeypatch.setattr(reddit_mod, "chromium_installed", browser_ready)
+    monkeypatch.setattr(reddit_mod, "_read_shreddit", fake_read)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="<html><script>blocked</script></html>")
+
+    data = await _scrape("https://www.reddit.com/r/Python/", handler)
+    assert data.fetch_tier == "reddit_browser"
+    assert "Rendered" in data.markdown
+    assert "headless Chromium" in data.markdown
 
 
 def test_user_comment_listing_formats_t1():

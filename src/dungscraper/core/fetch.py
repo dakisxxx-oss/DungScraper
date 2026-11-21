@@ -36,6 +36,30 @@ class RawFetch:
     tier: str = "http"
 
 
+def read_response_text(response: httpx.Response) -> str:
+    """Body as text. A bad Content-Encoding does not raise."""
+    try:
+        return response.text or ""
+    except httpx.DecodingError:
+        pass
+    except Exception:
+        return ""
+    try:
+        raw = response.read() if hasattr(response, "read") else b""
+    except Exception:
+        raw = b""
+    if not raw:
+        return ""
+    if raw[:2] == b"\x1f\x8b":
+        import gzip
+
+        try:
+            raw = gzip.decompress(raw)
+        except Exception:
+            return raw.decode("utf-8", "replace")
+    return raw.decode("utf-8", "replace")
+
+
 def merge_headers(settings: Settings, extra: dict[str, str]) -> dict[str, str]:
     headers = {
         "User-Agent": settings.fetch_user_agent,
@@ -43,6 +67,9 @@ def merge_headers(settings: Settings, extra: dict[str, str]) -> dict[str, str]:
         "Accept-Language": "en-US,en;q=0.9",
         "Cache-Control": "no-cache",
         "Upgrade-Insecure-Requests": "1",
+        # gzip and deflate only. Advertising br or zstd without a working decoder
+        # makes servers send a body httpx then fails to inflate.
+        "Accept-Encoding": "gzip, deflate",
         "sec-ch-ua": '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
         "sec-ch-ua-mobile": "?0",
         "sec-ch-ua-platform": '"Windows"',
@@ -117,6 +144,18 @@ async def request_with_retries(
             response = await client.request(method, url, timeout=timeout, **kwargs)
         except DungScraperError:
             raise
+        except httpx.DecodingError as exc:
+            headers = dict(kwargs.get("headers") or {})
+            if str(headers.get("Accept-Encoding", "")).lower() != "identity":
+                headers["Accept-Encoding"] = "identity"
+                kwargs["headers"] = headers
+                last_error = exc
+                continue
+            raise DungScraperError(
+                "fetch_failed",
+                f"Could not decode the response from {safe_url(url)}: {exc}",
+                status=502,
+            ) from exc
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             last_error = exc
             if attempt >= retries:

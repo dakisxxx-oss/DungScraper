@@ -119,6 +119,28 @@ def test_robots_and_sitemap_parse():
     assert children == ["https://example.com/s1.xml"]
 
 
+@pytest.mark.asyncio
+async def test_decoding_error_retries_with_identity_encoding():
+    from dungscraper.core.fetch import request_with_retries
+
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if request.headers.get("accept-encoding") != "identity":
+            raise httpx.DecodingError(
+                "Error -3 while decompressing data: incorrect header check",
+                request=request,
+            )
+        return httpx.Response(200, text="plain body")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        response = await request_with_retries(client, "GET", "https://example.com/a", retries=1)
+    assert response.text == "plain body"
+    assert calls["n"] == 2
+
+
 def test_polite_interval_honors_crawl_delay_with_a_cap():
     from dungscraper.core.limiter import polite_interval
 
