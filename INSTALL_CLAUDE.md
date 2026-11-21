@@ -5,7 +5,7 @@
 1. Atidarykite **PowerShell**. Klonuokite repozitoriją į namų aplanką:
 
    ```powershell
-   git clone https://github.com/darius-ra-auskas/DungScraper.git $env:USERPROFILE\DungScraper
+   git clone https://github.com/dakisxxx-oss/DungScraper.git $env:USERPROFILE\DungScraper
    cd $env:USERPROFILE\DungScraper
    ```
 
@@ -36,6 +36,7 @@ Reddit veikia be raktų. Pavyzdys: „Use the DungScraper reddit tool to list ho
 - **`outline`.** Kai `scrape` apkarpomas, atsakyme yra antraštės ir `offset`, kad kitą kartą būtų galima šokti į tą vietą.
 - **Crawl-delay.** robots.txt pauzė gerbiama, bet ne ilgiau kaip 10 sekundžių.
 - **YouTube titrai.** Jei senasis caption sąrašas tuščias, titrai imami iš paties vaizdo puslapio.
+- **Kontaktai ir darbai (0.2.0, lieka 0.3.0).** `find_contacts_tool` renka viešus įmonės el. paštus, `find_jobs_tool` — darbo skelbimų nuorodas.
 
 ## English instructions
 
@@ -44,7 +45,7 @@ Follow these steps in order. They are written so a person or Claude Desktop can 
 ### 1. Clone into your user profile
 
 ```powershell
-git clone https://github.com/darius-ra-auskas/DungScraper.git $env:USERPROFILE\DungScraper
+git clone https://github.com/dakisxxx-oss/DungScraper.git $env:USERPROFILE\DungScraper
 cd $env:USERPROFILE\DungScraper
 ```
 

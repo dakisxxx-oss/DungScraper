@@ -104,6 +104,12 @@ class DungScraper:
     def search(self, query: str, **options: Any) -> dict[str, Any]:
         return self._request("POST", "/v1/search", {"query": query, **options})["data"]
 
+    def contacts(self, url: str, **options: Any) -> dict[str, Any]:
+        return self._request("POST", "/v1/contacts", {"url": url, **options})["data"]
+
+    def jobs(self, url: str, **options: Any) -> dict[str, Any]:
+        return self._request("POST", "/v1/jobs", {"url": url, **options})["data"]
+
     def extract(self, **options: Any) -> dict[str, Any]:
         return self._request("POST", "/v1/extract", options)["data"]
 

@@ -467,3 +467,116 @@ class DiffResponse(BaseModel):
     success: bool = True
     data: DiffData | None = None
     error: ErrorBody | None = None
+
+
+class ContactsRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    url: str
+    depth: int = Field(1, ge=0, le=3)
+    limit: int = Field(8, ge=1, le=30)
+    render: RenderMode = "auto"
+    respect_robots: bool | None = Field(
+        None, validation_alias=AliasChoices("respect_robots", "respectRobots")
+    )
+    delay_ms: int = Field(250, ge=0, le=60_000, validation_alias=AliasChoices("delay_ms", "delay"))
+    timeout_ms: int | None = Field(
+        None, ge=1000, le=180_000, validation_alias=AliasChoices("timeout_ms", "timeout")
+    )
+    check_mx: bool = Field(
+        False,
+        validation_alias=AliasChoices("check_mx", "checkMx"),
+        description="Look up whether each email domain has a mail server (adds a DNS lookup per domain).",
+    )
+
+    @field_validator("url")
+    @classmethod
+    def check_url(cls, value: str) -> str:
+        return _http_url(value)
+
+
+class EmailLocation(BaseModel):
+    url: str
+    source: Literal["mailto", "text", "obfuscated", "jsonld", "cloudflare"]
+    context: str = ""
+
+
+class ContactEmail(BaseModel):
+    email: str
+    kind: str = "other"
+    same_domain: bool = False
+    mx: bool | None = None
+    found_at: list[EmailLocation] = Field(default_factory=list)
+
+
+class CareerLink(BaseModel):
+    url: str
+    text: str = ""
+    found_at: str = ""
+
+
+class ContactPage(BaseModel):
+    url: str
+    status_code: int | None = None
+    emails: int = 0
+    career_links: int = 0
+
+
+class ContactsData(BaseModel):
+    url: str
+    domain: str
+    emails: list[ContactEmail] = Field(default_factory=list)
+    career_links: list[CareerLink] = Field(default_factory=list)
+    pages: list[ContactPage] = Field(default_factory=list)
+    pages_scanned: int = 0
+    skipped_robots: int = 0
+    ignored_addresses: int = 0
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ContactsResponse(BaseModel):
+    success: bool = True
+    data: ContactsData | None = None
+    error: ErrorBody | None = None
+
+
+class JobsRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    url: str
+    limit: int = Field(100, ge=1, le=500)
+    render: RenderMode = "auto"
+    respect_robots: bool | None = Field(
+        None, validation_alias=AliasChoices("respect_robots", "respectRobots")
+    )
+    timeout_ms: int | None = Field(
+        None, ge=1000, le=180_000, validation_alias=AliasChoices("timeout_ms", "timeout")
+    )
+
+    @field_validator("url")
+    @classmethod
+    def check_url(cls, value: str) -> str:
+        return _http_url(value)
+
+
+class JobLink(BaseModel):
+    url: str
+    title: str = ""
+    reason: str = ""
+    tags: list[str] = Field(default_factory=list)
+    apply_email: str | None = None
+
+
+class JobsData(BaseModel):
+    url: str
+    jobs: list[JobLink] = Field(default_factory=list)
+    total_links: int = 0
+    status_code: int | None = None
+    render_mode: str = "http"
+    notes: list[str] = Field(default_factory=list)
+
+
+class JobsResponse(BaseModel):
+    success: bool = True
+    data: JobsData | None = None
+    error: ErrorBody | None = None

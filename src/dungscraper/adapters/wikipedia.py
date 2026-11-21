@@ -11,6 +11,9 @@ from dungscraper.core.content import html_to_content
 from dungscraper.models import ScrapeData, ScrapeRequest
 
 
+PROJECT_URL = "+https://github.com/dakisxxx-oss/DungScraper"
+
+
 def wiki_title(url: str) -> tuple[str, str] | None:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
@@ -35,7 +38,12 @@ class WikipediaAdapter:
             return None
         language, title = parsed
         api = f"https://{language}.wikipedia.org/api/rest_v1/page/html/{quote(title, safe='')}"
-        response = await client.get(api, headers={"Accept": "text/html"}, timeout=20)
+        # Wikimedia blocks browser-like user agents and bare bot names. It wants a contact URL.
+        response = await client.get(
+            api,
+            headers={"Accept": "text/html", "User-Agent": f"{settings.robots_user_agent} ({PROJECT_URL})"},
+            timeout=20,
+        )
         if response.status_code >= 400 or not response.text:
             return None
         extracted = html_to_content(response.text, request.url, only_main_content=request.only_main_content)

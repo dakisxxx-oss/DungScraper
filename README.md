@@ -1,18 +1,69 @@
 # DungScraper
 
-Windows + Claude Desktop, step by step: [INSTALL_CLAUDE.md](INSTALL_CLAUDE.md).
+Self-hosted web scraping and crawling for AI agents. One tool turns a URL into Markdown, crawls a site, lists its URLs, searches the web, finds public business contacts and job links, and extracts JSON. It runs on your computer and needs no account or API key.
+
+**Why use it**
+
+- **One command to install.** `install.ps1` on Windows, `install.sh` on macOS and Linux.
+- **Private by default.** Runs on your computer, listens on 127.0.0.1, no account, no API key.
+- **Clean Markdown.** Main content only, with tables, code, links and images kept.
+- **Handles hard pages.** HTTP first, a real Chromium browser when a page needs JavaScript.
+- **Made for agents.** REST API, Python SDK, CLI and an MCP server for Claude and other agents.
+- **Public company info.** Business emails with the page where each was found, and job links tagged junior and remote.
+- **Polite.** Respects robots.txt.
+
+Version 0.3.0 keeps the 0.2.0 contacts and jobs tools and reads Reddit with no API key.
 
 ## Kas naujo
 
-Reddit skaitomas be API raktų. Viešas JSON (`old.reddit.com`, tada `www` ir `np`), jei nepavyksta — RSS, tada `old.reddit.com` HTML. Jei nustatyti `DUNGSCRAPER_REDDIT_CLIENT_ID` ir `DUNGSCRAPER_REDDIT_CLIENT_SECRET`, naudojama oficiali API, o viešas kelias lieka atsargai. Claude įrankis `reddit` nebesako, kad šaltinis nesukonfigūruotas.
+0.3.0 sujungia abu darbus. Reddit veikia be API raktų (viešas JSON, tada RSS, tada old.reddit HTML). Kontaktai ir darbo skelbimai lieka: `contacts`, `jobs`, `find_contacts_tool`, `find_jobs_tool`. Taip pat `read_feed`, `outline` apkarpytam `scrape`, ir `Crawl-delay`.
 
-Taip pat: `read_feed` (RSS/Atom įrašai), `scrape` atpažįsta srautus, apkarpytas atsakymas turi `outline` (antraštė ir `offset`), crawl gerbia `Crawl-delay` (daugiausia 10 s), YouTube titrai imami ir iš vaizdo puslapio, kai senasis sąrašas tuščias.
+## Install in 1 minute
 
-Self-hosted web scraping and crawling for AI agents. One service turns a URL into Markdown, crawls a site, lists its URLs, searches the web, and extracts JSON.
+Needs Python 3.11 or newer and git. No admin rights.
+
+```powershell
+git clone https://github.com/dakisxxx-oss/DungScraper.git
+cd DungScraper
+.\install.ps1
+```
+
+On macOS or Linux run `./install.sh` instead of `.\install.ps1`. Add `-NoBrowser` (Windows) or `--no-browser` (macOS, Linux) to skip the 150 MB Chromium download; plain HTTP scraping still works, JavaScript-only pages do not. The installers are safe to run again. If PowerShell blocks the script, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
+
+Other ways: `pip install git+https://github.com/dakisxxx-oss/DungScraper.git`, then `python -m playwright install chromium`, or Docker (below). `dungscraper install-claude` is optional and adds the tools to Claude Desktop ([INSTALL_CLAUDE.md](INSTALL_CLAUDE.md)).
+
+## Use it
+
+`--local` runs everything in your own process. No server is needed.
+
+```powershell
+.\.venv\Scripts\dungscraper.exe scrape --local https://example.com
+.\.venv\Scripts\dungscraper.exe search "python junior remote jobs" --limit 5 --no-scrape --local
+.\.venv\Scripts\dungscraper.exe contacts https://example.com --depth 1 --local
+.\.venv\Scripts\dungscraper.exe jobs https://example.com/careers --local
+```
+
+(On macOS and Linux the program is `.venv/bin/dungscraper`. After `.\.venv\Scripts\Activate.ps1` or `source .venv/bin/activate` you can type just `dungscraper`.) `map` and `crawl` take `--local` too. Without `--local` the commands call the API, which you start with `.\run.ps1` or `./run.sh`; the playground is then at <http://127.0.0.1:8741>. The CLI prints only warnings and errors by default. Use `--log-level INFO` for more.
+
+### Contacts and jobs
+
+`contacts <url>` collects **public business** email addresses and careers links from a page, and with `--depth 1` (default) also from the contact, imprint, careers and about pages it links to. It reads `mailto:` links, visible text, schema.org JSON-LD, Cloudflare-protected links, and simple forms like `name [at] host [dot] com`. Each email comes with the page URL and a text snippet where it was found, a rough kind (`jobs`, `general`, `sales`, `support`, `press`, `legal`, `other`), and whether it matches the site's domain. Image names such as `logo@2x.png`, placeholders such as `you@example.com`, error-tracker keys and `noreply` addresses are dropped. robots.txt is respected. API: `POST /v1/contacts`.
+
+`jobs <url>` lists links on a careers page that look like single job postings (JSON-LD `JobPosting`, job-board hosts such as Greenhouse, Lever or Workable, `/jobs/<slug>` paths, apply links). Entries get `junior` and `remote` tags when the text says so. Pages that list roles as collapsed sections with an apply-by-email address are reported with `apply_email`. API: `POST /v1/jobs`.
+
+Output and checks (0.2.0):
+
+- `--format compact` prints one email or one job per line. `--format csv` prints a header and one row per item. The default `json` is the full result.
+- `contacts --check-mx` looks up whether each email domain has a mail server and sets `mx` to `true`, `false` or `null` (unknown). It makes one DNS lookup per domain.
+- `jobs --render browser` loads the page in Chromium first. Use it for career pages that fill in their jobs with JavaScript.
+- Roles listed as collapsed sections get their own link, `<page>#<role-name>`, so each row is distinct.
+- Both are MCP tools too: `find_contacts_tool` and `find_jobs_tool`.
+
+Use these for public company information only. See [SECURITY.md](SECURITY.md) for responsible use.
 
 DungScraper is Python on purpose. [Trafilatura](https://github.com/adbar/trafilatura) is still the strongest open-source main-content extractor, and it is Python-only. The same language then covers FastAPI, Playwright, PyMuPDF, the MCP server, the SDK, and the CLI, so there is one process model to deploy.
 
-## Quickstart
+## Docker and manual setup
 
 Docker, from this directory:
 
@@ -20,7 +71,7 @@ Docker, from this directory:
 docker compose up --build
 ```
 
-That starts Redis, the `dungscraper` API, and `dungscraper-worker`. The image is `dungscraper`. The API listens on port **8741**. The dev key is `dungscraper-dev-key`.
+That starts Redis, the `dungscraper` API, and `dungscraper-worker`. The image is `dungscraper`. The API listens on `127.0.0.1:8741` (this computer only). The dev key is `dungscraper-dev-key`; change `DUNGSCRAPER_API_KEYS` before you publish the port anywhere else.
 
 Without Docker:
 
@@ -52,6 +103,8 @@ Health check: `GET /health` (no API key required).
 | `GET /v1/crawl/{id}` | Poll a crawl. `DELETE` cancels it. |
 | `POST /v1/map` | URLs from sitemaps plus links. `render=browser` reads JavaScript navigation. |
 | `POST /v1/search` | Search, then scrape the hits. Falls through providers when one rate-limits. |
+| `POST /v1/contacts` | Public business emails (with where each was found) and careers links from a page or a few linked pages. |
+| `POST /v1/jobs` | Links to job postings on a careers page, tagged junior and remote. |
 | `POST /v1/extract` | JSON from a page or from text, checked against a JSON Schema. |
 | `POST /v1/chunk` | Heading-aware chunks for retrieval. |
 | `POST /v1/diff` | Unified diff of markdown against a baseline or the previous snapshot. |
@@ -90,11 +143,9 @@ curl -s http://127.0.0.1:8741/v1/scrape \
 Reddit works with no API key. A subreddit listing (`hot`, `new`, `top`, `rising`), a post and its comments, a search, or a user page is read in this order:
 
 1. The official OAuth API, only when `DUNGSCRAPER_REDDIT_CLIENT_ID` and `DUNGSCRAPER_REDDIT_CLIENT_SECRET` are both set. If that call fails, the public chain below is the fallback.
-2. Public JSON on `old.reddit.com`, then `www.reddit.com`, then `np.reddit.com` (`.json`, a browser User-Agent, at least `DUNGSCRAPER_REDDIT_MIN_INTERVAL_SECONDS` between requests, default 1.25). HTTP 429 waits for `Retry-After` up to 8 seconds and retries once. A longer wait is returned as `reddit_rate_limited` instead of hitting more hosts. A blocked response can be retried once with curl_cffi Chrome impersonation (`DUNGSCRAPER_REDDIT_BROWSER_IMPERSONATE=false` turns that off).
+2. Public JSON on `old.reddit.com`, then `www.reddit.com`, then `np.reddit.com`. Requests share a gap (`DUNGSCRAPER_REDDIT_MIN_INTERVAL_SECONDS`, default 1.25). HTTP 429 waits for `Retry-After` up to 8 seconds and retries once.
 3. The same resource as RSS.
-4. `old.reddit.com` HTML, parsed from the listing markup.
-
-Third-party mirrors are not used. They go offline too often to be a dependency. Datacenter IPs are often blocked; a home connection usually gets a normal JSON response. Private, quarantined, banned, and missing pages return `reddit_private`, `reddit_quarantined`, `reddit_banned`, or `reddit_not_found`. Anything else that never answers is `reddit_unavailable`. None of these say the source is "not configured".
+4. `old.reddit.com` HTML.
 
 Optional keys, if you already have a script app:
 
@@ -106,9 +157,7 @@ export DUNGSCRAPER_REDDIT_PASSWORD=your_password
 export DUNGSCRAPER_REDDIT_USER_AGENT='dungscraper/0.1 by yourname'
 ```
 
-The same adapter hook reads other allowed APIs and falls back to a normal fetch when they fail: Wikipedia's REST HTML, GitHub's REST API (`DUNGSCRAPER_GITHUB_TOKEN` optional), the arXiv Atom API, Hacker News' Firebase API, and YouTube captions. Captions come from the public timedtext list, and from the watch page's player response when that list is empty. `max_comment_depth` limits Reddit and Hacker News threads.
-
-RSS and Atom documents are rendered as titled items when you scrape the feed URL. The MCP tool `read_feed` returns the same items as JSON. A clipped `scrape` result includes `outline`: each heading and the character `offset` to pass back. Crawls honor `Crawl-delay` from robots.txt, capped at 10 seconds.
+The same adapter hook reads other allowed APIs and falls back to a normal fetch when they fail: Wikipedia's REST HTML (with a contact URL in the user agent), GitHub's REST API (`DUNGSCRAPER_GITHUB_TOKEN` optional), the arXiv Atom API, Hacker News' Firebase API, and YouTube captions. Captions come from the public timedtext list, and from the watch page when that list is empty. `max_comment_depth` limits Reddit and Hacker News threads.
 
 ```json
 {
@@ -265,9 +314,9 @@ dungscraper install-claude --launcher pipx --dry-run
 
 The API also serves streamable HTTP at `http://127.0.0.1:8741/mcp`. Send the same bearer token you use for the REST API when auth is on.
 
-Tools: `scrape`, `batch_scrape`, `crawl`, `crawl_status`, `map_site`, `search_web`, `extract`, `chunk_text`, `reddit`, `read_feed`.
+Tools: `scrape`, `batch_scrape`, `crawl`, `crawl_status`, `map_site`, `search_web`, `extract`, `chunk_text`, `reddit`, `read_feed`, `find_contacts_tool`, `find_jobs_tool`.
 
-`reddit` reads a subreddit, post, search, or user with no API key. `read_feed` reads an RSS or Atom URL into items. `scrape` returns at most 12,000 characters of markdown. The `truncation` object has `next_offset`; call again with that `offset` for the next slice. When the page has headings, `outline` lists each one with the offset to jump there. Crawl pages and batch results are clipped the same way so a long site does not fill the model context. `examples/cursor.mcp.json` shows the Cursor stdio entry.
+`reddit` reads a subreddit, post, search, or user with no API key. `read_feed` reads RSS or Atom. `find_contacts_tool` and `find_jobs_tool` are the 0.2.0 company tools. `scrape` returns at most 12,000 characters of markdown. The `truncation` object has `next_offset`; call again with that `offset` for the next slice. When the page has headings, `outline` lists each one with the offset to jump there. Crawl pages and batch results are clipped the same way so a long site does not fill the model context. `examples/cursor.mcp.json` shows the Cursor stdio entry.
 
 ## Configuration
 
@@ -285,8 +334,6 @@ See `.env.example`. The important ones:
 | `DUNGSCRAPER_BRAVE_API_KEY` | | Optional search provider. |
 | `DUNGSCRAPER_SERPER_API_KEY` | | Optional search provider. |
 | `DUNGSCRAPER_SEARXNG_URL` | | Optional search provider. |
-| `DUNGSCRAPER_REDDIT_MIN_INTERVAL_SECONDS` | `1.25` | Gap between public Reddit requests. |
-| `DUNGSCRAPER_REDDIT_BROWSER_IMPERSONATE` | `true` | One curl_cffi retry when public JSON is blocked. |
 
 Retries cover timeouts and HTTP 429/502/503/504, with exponential backoff. Logs are JSON on stdout. Every response includes `x-request-id`.
 
@@ -321,7 +368,7 @@ Twenty URLs (news, docs, a SPA, e-commerce, Q&A, Reddit, Medium), same rule both
 
 The page that moved in the second round was the Stack Overflow question on `yield`: a 4-word "Just a moment" interstitial became about 16,000 words that include the answer. AP News and Medium stayed on a challenge page. Reuters and both Reddit URLs were refused because their robots.txt disallows `DungScraperBot`.
 
-The third round stayed **15/20** in that run. Wikipedia, GitHub, Hacker News, and arXiv came from their public APIs. Reddit with no app credentials returned `reddit_not_configured` and did not fetch HTML. That Reddit path has since changed: public JSON, then RSS, then old.reddit HTML, with no API key. Reuters was still a robots refusal. AP News and Medium still stopped on a security check.
+The third round stayed **15/20**. Wikipedia, GitHub, Hacker News, and arXiv come from their public APIs. Reddit with no app credentials returns `reddit_not_configured` and does not fetch HTML. Reuters is still a robots refusal. AP News and Medium still stop on a security check.
 
 Round 4 added the free challenge ladder and measured the same set again (`benchmark/hard-round4.json`): still **15/20** from this VPS. curl_cffi ran on the Cloudflare pages and was still blocked. Patchright, Camoufox, and a Byparr sidecar were not installed here, so the browser step was the bundled Playwright fallback. AP News and Medium remain challenge pages. Stack Overflow's markdown in that run opens on the question title. A residential or home IP, plus `pip install 'dungscraper[stealth]'` or Byparr, is the setup this ladder is meant for. It will not reliably beat an interactive image captcha.
 
@@ -371,8 +418,7 @@ Unit tests cover extraction, chunking, simhash, robots, sitemaps, SSRF checks, s
 ## Known gaps
 
 - Managed challenges still win on many datacenter IPs. The free ladder (curl_cffi, Patchright, Camoufox, Byparr, opt-in SeleniumBase) does not reliably solve interactive image captchas. A response that is still an interstitial sets `block_reason` to the vendor name. It works better from a home IP than from a VPS.
-- Sites that disallow `DungScraperBot` in robots.txt are not fetched, except where a separate adapter reads an API or feed. Reuters stays blocked unless its robots.txt allows the bot. `respect_robots: false` is for a site you are allowed to read, not a default. Reddit listings do not use that generic fetch: they use public JSON, RSS, then old.reddit HTML, with a gap between requests. A datacenter IP may still be blocked.
-- `Crawl-delay` above 10 seconds is capped at 10 so one robots.txt line cannot stall a crawl.
+- Sites that disallow `DungScraperBot` in robots.txt are not fetched, except where a separate adapter reads an API or feed. Reuters stays blocked unless its robots.txt allows the bot. `respect_robots: false` is for a site you are allowed to read, not a default. Reddit listings use public JSON, RSS, then old.reddit HTML. A datacenter IP may still be blocked.
 - Signup walls and ad prompts can sit in front of real copy. Stack Overflow's answer is in the markdown, under a signup form. CNN's scrape opens on a feedback prompt.
 - Search still depends on a provider. With no Brave, Serper, or SearXNG key, DuckDuckGo is the only option, and it can rate-limit this host.
 - Extract returns `llm_not_configured` until you set an OpenAI-compatible model. It does not guess.

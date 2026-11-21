@@ -17,7 +17,9 @@ from dungscraper.core.chunk import chunk_markdown
 from dungscraper.core.clip import clip_payload
 from dungscraper.core.feeds import fetch_feed
 from dungscraper.core.fetch import make_client
+from dungscraper.core.contacts import find_contacts
 from dungscraper.core.extract import extract_structured
+from dungscraper.core.joblinks import find_job_links
 from dungscraper.core.jobs import job_view, start_crawl
 from dungscraper.core.map import map_site
 from dungscraper.core.scrape import scrape_url
@@ -25,8 +27,10 @@ from dungscraper.core.search import search_web
 from dungscraper.errors import DungScraperError
 from dungscraper.models import (
     ChunkRequest,
+    ContactsRequest,
     CrawlRequest,
     ExtractRequest,
+    JobsRequest,
     MapRequest,
     ScrapeRequest,
     SearchRequest,
@@ -41,6 +45,8 @@ INSTRUCTIONS = (
     "Reddit URLs work with no API key: public JSON, then RSS, then old.reddit HTML. "
     "Use the reddit tool for a subreddit, post, search, or user. Use read_feed for RSS or Atom. "
     "A clipped scrape includes an outline of headings and the offset to jump there. "
+    "find_contacts_tool reads public company emails and careers links. "
+    "find_jobs_tool lists job posting links. "
     "robots.txt is respected unless respect_robots is false."
 )
 
@@ -381,6 +387,64 @@ def build_mcp() -> MCPServer:
         except DungScraperError as exc:
             raise ToolError(f"{exc.code}: {exc.message}") from exc
         return _dump(data)
+
+    @mcp.tool(description=(
+        "Find public business email addresses and careers links for a company site. "
+        "Reads the page and, with depth=1, the contact, imprint, careers and about pages it links to. "
+        "Every email says where it was found, its kind (jobs, general, sales, support, press, legal, other) "
+        "and whether it is on the own domain of the site. check_mx=true also looks up whether the email domain "
+        "can receive mail. Public company information only. robots.txt is respected."
+    ))
+    async def find_contacts_tool(
+        url: str,
+        depth: int = 1,
+        limit: int = 8,
+        render: str = "auto",
+        check_mx: bool = False,
+    ) -> str:
+        try:
+            body = ContactsRequest(url=url, depth=depth, limit=limit, render=render, check_mx=check_mx)
+        except Exception as exc:
+            raise ToolError(str(exc)) from exc
+        payload = body.model_dump(mode="json")
+
+        async def local(services):
+            data = await find_contacts(
+                body,
+                settings=services.settings,
+                client=services.client,
+                cache=services.cache,
+                browser=services.browser,
+                limiter=services.limiter,
+            )
+            return data.model_dump(mode="json")
+
+        return await _dispatch("POST", "/v1/contacts", payload, local)
+
+    @mcp.tool(description=(
+        "List links to job postings on a careers page. Finds schema.org JobPosting entries, job-board links "
+        "(Greenhouse, Lever, Workable and similar), /jobs/<slug> paths and apply links. "
+        "Each job carries tags (junior, remote) and apply_email when the page says to apply by email. "
+        "Use render=browser for pages that load their jobs with JavaScript."
+    ))
+    async def find_jobs_tool(url: str, limit: int = 100, render: str = "auto") -> str:
+        try:
+            body = JobsRequest(url=url, limit=limit, render=render)
+        except Exception as exc:
+            raise ToolError(str(exc)) from exc
+        payload = body.model_dump(mode="json")
+
+        async def local(services):
+            data = await find_job_links(
+                body,
+                settings=services.settings,
+                client=services.client,
+                cache=services.cache,
+                browser=services.browser,
+            )
+            return data.model_dump(mode="json")
+
+        return await _dispatch("POST", "/v1/jobs", payload, local)
 
     return mcp
 
