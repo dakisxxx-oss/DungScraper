@@ -20,7 +20,7 @@ Same 20 URLs after the adapter round (`benchmark/hard-round3.json`), compared wi
 | --- | ---: | ---: |
 | Useful page | 15/20 | 15/20 |
 | robots.txt disallow | 1 (Reuters) | 1 (Reuters) |
-| Reddit, no API credentials | 2 robots refusals | 2 `reddit_not_configured` |
+| Reddit, no API credentials | 2 robots refusals | 2 `reddit_not_configured` (historical; public JSON/RSS/HTML is used now) |
 | Challenge page left | 2 | 2 |
 
 Wikipedia, GitHub, Hacker News, and arXiv succeeded via their public APIs. Reddit HTML was not fetched. AP News and Medium still end on a security check. Overlay stripping can drop a leading Stack Overflow signup or CNN feedback block when another heading follows; those pages were already successes, so the 15/20 count does not move.

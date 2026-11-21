@@ -27,7 +27,15 @@
 
 6. Patikrinkite pokalbyje: „Use DungScraper to scrape https://example.com and show the markdown.“
 
-Reddit raktus ir Byparr, jei reikia, žiūrėkite angliškoje dalyje žemiau.
+Reddit veikia be raktų. Pavyzdys: „Use the DungScraper reddit tool to list hot posts in r/Python.“ Jei Reddit atsako `reddit_unavailable` arba `reddit_rate_limited`, dažniausiai kaltas duomenų centro IP arba per dažnos užklausos. Namų ryšys paprastai veikia. Byparr, jei reikia, aprašytas angliškoje dalyje.
+
+### Kas naujo
+
+- **Reddit be API.** Įrankis `reddit` ir paprastas `scrape` su reddit.com adresu. Eilė: viešas JSON, tada RSS, tada old.reddit HTML. Oficialūs raktai naudojami tik jei juos patys įrašote, ir nebėra privalomi. Reddit nebepatvirtina paprastų programų (reikia Devvit), todėl raktų laukti neverta.
+- **`read_feed`.** RSS/Atom (tinklaraščiai, naujienos) kaip sąrašas: pavadinimas, nuoroda, autorius, data, santrauka. `scrape` tą patį srautą irgi atpažįsta.
+- **`outline`.** Kai `scrape` apkarpomas, atsakyme yra antraštės ir `offset`, kad kitą kartą būtų galima šokti į tą vietą.
+- **Crawl-delay.** robots.txt pauzė gerbiama, bet ne ilgiau kaip 10 sekundžių.
+- **YouTube titrai.** Jei senasis caption sąrašas tuščias, titrai imami iš paties vaizdo puslapio.
 
 ## English instructions
 
@@ -133,9 +141,15 @@ Closing the window is not enough. Claude Desktop keeps running in the system tra
 
 `install-claude` will not do this for you.
 
-### 6. Optional: Reddit API keys
+### 6. Reddit needs no API keys
 
-Reddit HTML is not scraped. `robots.txt` stays on. To read a post, comment thread, subreddit, or search through Reddit's official API, create a **script** app at <https://www.reddit.com/prefs/apps> (button **create another app**, type **script**). The username and password are the Reddit account that owns the app. Put them in the server `env` block so only Claude's DungScraper process sees them:
+Subreddit listings (`hot`, `new`, `top`), a post and its comments, search, and user posts work with an empty `env` block. DungScraper tries public JSON (`old.reddit.com`, then `www.reddit.com`, then `np.reddit.com`), then RSS, then old.reddit HTML. Requests are spaced (about 1.25 seconds). A `429` waits and retries once. If Reddit asks for a long wait, the tool returns `reddit_rate_limited` instead of hammering the site.
+
+Ask Claude: use the DungScraper reddit tool to list hot posts in r/Python, with author and score.
+
+A datacenter IP is often blocked (`reddit_unavailable`). A home connection usually gets JSON. Private subreddits return `reddit_private`. Nothing in this path says Reddit is "not configured".
+
+Keys are optional. Reddit no longer approves ordinary script apps (new apps are Devvit), so these variables will usually stay empty. If you already have a client id and secret, put them in the server `env` block. They are used first, and the public chain is only the fallback when that API fails:
 
 ```json
 {
@@ -155,7 +169,7 @@ Reddit HTML is not scraped. `robots.txt` stays on. To read a post, comment threa
 }
 ```
 
-The user agent must be a unique string, not a browser copy. After editing the file, quit Claude from the tray and reopen it. Without these variables a Reddit URL returns `reddit_not_configured` and explains the same setup.
+The user agent must be a unique string, not a browser copy. After editing the file, quit Claude from the tray and reopen it. Leaving the variables unset is the normal setup.
 
 ### 7. Optional: Byparr sidecar
 
@@ -183,7 +197,7 @@ Open a new chat. Ask Claude to use the DungScraper tools. Examples:
 
 A working server answers with page text, not a message that the tool is missing. In Claude Desktop, the tool name appears as DungScraper. The first call can take longer while the browser starts.
 
-If Reddit keys are set, try: Use DungScraper to list the current hot posts in r/Python, with author and score.
+Try: Use the DungScraper reddit tool to list the current hot posts in r/Python, with author and score. No Reddit keys are required.
 
 ### Troubleshooting
 
@@ -193,7 +207,8 @@ If Reddit keys are set, try: Use DungScraper to list the current hot posts in r/
 | `dungscraper` is not recognized | The venv is not active, or `command` is not an absolute path. Use the `dungscraper.exe` or `python.exe` snippet in step 4. |
 | JSON error on startup | A trailing comma or a missing brace in `claude_desktop_config.json`. The backup next to it is `claude_desktop_config.json.bak-<timestamp>`. |
 | Tool runs, scrape fails immediately | In the venv run `python -m playwright install chromium` or `python -m patchright install chromium`. |
-| Reddit returns `reddit_not_configured` | The `env` block is missing, or Claude was not restarted after the edit. |
+| Reddit returns `reddit_unavailable` | This IP is blocked. A home connection usually works. The tool already tried JSON, RSS, and old.reddit HTML. |
+| Reddit returns `reddit_rate_limited` | Wait and call again. The message includes `Retry-After` when Reddit sent one. |
 | Still a "Just a moment" page | The site blocked this IP. Optional next steps are the stealth extra, a home IP, or Byparr. Image captchas are not solved. |
 
 Logs:

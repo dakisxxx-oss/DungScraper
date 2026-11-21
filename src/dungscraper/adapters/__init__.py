@@ -1,9 +1,10 @@
 """API-backed site adapters.
 
-Each adapter reads a public or OAuth API instead of the HTML page. Optional
-adapters return None when they cannot handle a URL, and the normal fetch
-continues. Reddit is required: without credentials it raises, and it never
-falls through to HTML, because Reddit disallows that fetch in robots.txt.
+Each adapter reads a public API or a documented page format instead of the
+generic HTML fetch. Optional adapters return None when they cannot handle a
+URL, and the normal fetch continues. Reddit always handles its own URLs:
+the official API when credentials are set, otherwise public JSON, then RSS,
+then old.reddit HTML. It does not fall through to the generic fetcher.
 """
 
 from __future__ import annotations

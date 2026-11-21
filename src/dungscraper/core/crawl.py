@@ -13,7 +13,7 @@ from dungscraper.config import Settings
 from dungscraper.core.cache import Cache, NullCache
 from dungscraper.core.dedupe import Fingerprint, is_near_duplicate
 from dungscraper.core.fetch import BrowserManager
-from dungscraper.core.limiter import DomainRateLimiter
+from dungscraper.core.limiter import DomainRateLimiter, polite_interval
 from dungscraper.core.robots import RobotsGate
 from dungscraper.core.scrape import scrape_url
 from dungscraper.core.sitemap import discover_sitemap_urls
@@ -117,7 +117,8 @@ async def crawl_site(
         async with semaphore:
             if should_cancel and await should_cancel():
                 return None
-            await limiter.wait(host_key(url), request.delay_ms / 1000)
+            delay = await gate.crawl_delay(url)
+            await limiter.wait(host_key(url), polite_interval(request.delay_ms / 1000, delay))
             options = request.scrape_options.model_dump()
             options["formats"] = list(dict.fromkeys([*formats, "markdown", "links"]))
             options["respect_robots"] = respect

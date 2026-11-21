@@ -1,13 +1,31 @@
-"""Official feeds used when a page is a challenge instead of an article."""
+"""RSS and Atom parsing, plus the feed used when a page is a challenge."""
 
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
+import httpx
 from bs4 import BeautifulSoup
 
+from dungscraper.config import Settings
 from dungscraper.core.fetch import RawFetch
+from dungscraper.core.robots import RobotsGate
+from dungscraper.errors import DungScraperError
+from dungscraper.security import assert_public_url
+
+_FEED_MARKUP = re.compile(r"<(rss|rdf:rdf|feed)(\s|>)", re.IGNORECASE)
+
+
+@dataclass
+class FeedItem:
+    title: str
+    link: str
+    author: str = ""
+    published: str = ""
+    summary: str = ""
 
 
 def medium_feed_url(url: str) -> str | None:
@@ -41,35 +59,149 @@ def discover_feed(html: str, base_url: str) -> str | None:
     return None
 
 
-def feed_to_markdown(xml_text: str, *, wanted_url: str | None = None) -> str:
+def looks_like_feed(text: str, content_type: str = "", url: str = "") -> bool:
+    sample = (text or "").lstrip("\ufeff").lstrip()[:1500]
+    lowered = sample.lower()
+    if not lowered:
+        return False
+    if "<html" in lowered[:600] or lowered.startswith("<!doctype html"):
+        return False
+    if not _FEED_MARKUP.search(sample):
+        return False
+    ctype = (content_type or "").lower()
+    if any(token in ctype for token in ("rss", "atom", "xml", "text/plain")) or not ctype:
+        return True
+    path = urlsplit(url).path.lower() if url else ""
+    if path.endswith((".rss", ".atom", ".xml")):
+        return True
+    return "<item" in lowered or "<entry" in lowered
+
+
+def parse_feed(xml_text: str) -> tuple[str, list[FeedItem]]:
+    raw = (xml_text or "").lstrip("\ufeff").strip()
+    if not raw:
+        return "", []
     try:
-        root = ET.fromstring(xml_text)
+        root = ET.fromstring(raw)
     except ET.ParseError:
-        return ""
-    items = []
-    for node in root.iter():
-        if node.tag.split("}")[-1] not in {"item", "entry"}:
+        return "", []
+    container = root
+    if _local(root) == "rss":
+        container = next((child for child in list(root) if _local(child) == "channel"), root)
+    title = _child_text(container, "title")
+    items: list[FeedItem] = []
+    for node in list(container):
+        if _local(node) not in {"item", "entry"}:
             continue
-        title = _child_text(node, "title")
+        item_title = _child_text(node, "title")
         link = _link(node)
-        body = _child_text(node, "description") or _child_text(node, "summary") or _child_text(node, "content")
-        items.append((title, link, _plain(body)))
-    if wanted_url:
-        slug = urlsplit(wanted_url).path.rstrip("/").split("/")[-1]
-        matched = [item for item in items if slug and slug in (item[1] or "")]
-        if matched:
-            items = matched
-    lines = ["# Feed", ""]
-    for title, link, body in items[:20]:
-        lines.append(f"## {title or link or 'Untitled'}")
-        if link:
-            lines.append("")
-            lines.append(link)
-        if body:
-            lines.append("")
-            lines.append(body)
+        summary = _summary(node)
+        if not (item_title or link or summary):
+            continue
+        items.append(
+            FeedItem(
+                title=item_title,
+                link=link,
+                author=_author(node),
+                published=_published(node),
+                summary=summary,
+            )
+        )
+        if len(items) >= 100:
+            break
+    return title, items
+
+
+def items_to_markdown(title: str, items: list[FeedItem], *, limit: int = 20) -> str:
+    lines = [f"# {title or 'Feed'}", ""]
+    for item in items[:limit]:
+        lines.append(f"## {item.title or item.link or 'Untitled'}")
+        byline = " · ".join(part for part in (item.author, item.published) if part)
+        if byline:
+            lines.extend(["", byline])
+        if item.link:
+            lines.extend(["", item.link])
+        if item.summary:
+            summary = item.summary if len(item.summary) <= 1500 else item.summary[:1497] + "..."
+            lines.extend(["", summary])
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def feed_to_markdown(xml_text: str, *, wanted_url: str | None = None) -> str:
+    title, items = parse_feed(xml_text)
+    if wanted_url:
+        slug = urlsplit(wanted_url).path.rstrip("/").split("/")[-1]
+        matched = [item for item in items if slug and slug in (item.link or "")]
+        if matched:
+            items = matched
+    if not items:
+        return ""
+    return items_to_markdown(title or "Feed", items)
+
+
+async def fetch_feed(
+    url: str,
+    *,
+    settings: Settings,
+    client: httpx.AsyncClient,
+    limit: int = 20,
+    respect_robots: bool | None = None,
+) -> dict:
+    """Fetch one RSS or Atom URL and return structured items."""
+    assert_public_url(url, allow_private=settings.allow_private_networks)
+    respect = settings.respect_robots_default if respect_robots is None else respect_robots
+    if respect:
+        gate = RobotsGate(
+            client,
+            settings.robots_user_agent,
+            respect=True,
+            fail_open=settings.robots_fail_open,
+        )
+        if not await gate.allowed(url):
+            raise DungScraperError(
+                "robots_disallowed",
+                f"{url} is disallowed by robots.txt for {settings.robots_user_agent}. "
+                "Pass respect_robots=false only for a feed you are allowed to read.",
+                status=403,
+            )
+    bounded = max(1, min(int(limit), 50))
+    headers = {
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+        "User-Agent": settings.fetch_user_agent,
+    }
+    try:
+        response = await client.get(url, headers=headers, timeout=20)
+    except httpx.HTTPError as exc:
+        raise DungScraperError("feed_unavailable", f"Could not fetch the feed: {exc}", status=504) from exc
+    if response.status_code >= 400:
+        raise DungScraperError(
+            "feed_unavailable",
+            f"The feed returned HTTP {response.status_code}.",
+            status=502,
+        )
+    title, items = parse_feed(response.text)
+    if not items:
+        raise DungScraperError(
+            "feed_unreadable",
+            "The URL did not contain an RSS or Atom feed.",
+            status=422,
+        )
+    kept = items[:bounded]
+    return {
+        "title": title or "Feed",
+        "url": str(response.url),
+        "items": [
+            {
+                "title": item.title,
+                "link": item.link,
+                "author": item.author,
+                "published": item.published,
+                "summary": item.summary if len(item.summary) <= 1000 else item.summary[:997] + "...",
+            }
+            for item in kept
+        ],
+    }
 
 
 def feed_fetch_result(url: str, xml_text: str, *, source: str) -> RawFetch | None:
@@ -87,6 +219,37 @@ def feed_fetch_result(url: str, xml_text: str, *, source: str) -> RawFetch | Non
         tier="rss",
         warnings=[f"feed:{source}"],
     )
+
+
+def _local(node: ET.Element) -> str:
+    return node.tag.split("}")[-1].lower()
+
+
+def _author(node: ET.Element) -> str:
+    creator = _child_text(node, "creator")
+    if creator:
+        return creator
+    for child in list(node):
+        if _local(child) == "author":
+            name = _child_text(child, "name")
+            return name or "".join(child.itertext()).strip()
+    return ""
+
+
+def _published(node: ET.Element) -> str:
+    for name in ("published", "updated", "pubDate", "date"):
+        value = _child_text(node, name)
+        if value:
+            return value
+    return ""
+
+
+def _summary(node: ET.Element) -> str:
+    for name in ("description", "summary", "content"):
+        value = _child_text(node, name)
+        if value:
+            return _plain(value)
+    return ""
 
 
 def _child_text(node: ET.Element, name: str) -> str:

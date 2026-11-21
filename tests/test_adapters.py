@@ -1,3 +1,6 @@
+import json
+
+import httpx
 import pytest
 
 from dungscraper.adapters.arxiv import format_atom
@@ -5,7 +8,13 @@ from dungscraper.adapters.github import parse_github
 from dungscraper.adapters.hackernews import hn_target
 from dungscraper.adapters.reddit import REDDIT_SETUP, format_comment, format_listing, format_post, parse_reddit_url
 from dungscraper.adapters.wikipedia import wiki_title
-from dungscraper.adapters.youtube import captions_to_markdown, video_id
+from dungscraper.adapters.youtube import (
+    caption_tracks_from_watch,
+    captions_to_markdown,
+    pick_caption_track,
+    video_id,
+)
+from dungscraper.adapters.youtube import YouTubeAdapter
 from dungscraper.config import Settings
 from dungscraper.core.content import strip_overlays
 from dungscraper.core.diff import markdown_diff
@@ -22,6 +31,10 @@ def test_reddit_url_shapes():
     assert listing["kind"] == "subreddit" and listing["sort"] == "new"
     search = parse_reddit_url("https://www.reddit.com/search?q=web+scraping")
     assert search["kind"] == "search" and search["search"] == "web scraping"
+    top = parse_reddit_url("https://www.reddit.com/r/Python/top.json?t=week")
+    assert top["kind"] == "subreddit" and top["sort"] == "top" and top["t"] == "week"
+    user = parse_reddit_url("https://old.reddit.com/u/ada/submitted/")
+    assert user["kind"] == "user" and user["username"] == "ada" and user["section"] == "submitted"
 
 
 def test_reddit_markdown_includes_score_author_and_depth():
@@ -58,25 +71,59 @@ def test_reddit_markdown_includes_score_author_and_depth():
     assert "https://www.reddit.com/r/Python/comments/x/post/" in listing
 
 
+def test_reddit_setup_text_does_not_require_keys():
+    assert "not configured" not in REDDIT_SETUP.lower()
+    assert "no API key" in REDDIT_SETUP
+
+
 @pytest.mark.asyncio
-async def test_reddit_without_credentials_explains_the_app():
+async def test_reddit_without_credentials_reads_public_json():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "old.reddit.com"
+        assert request.url.path == "/r/Python/hot.json"
+        assert "Mozilla" in request.headers["user-agent"]
+        return httpx.Response(
+            200,
+            json={
+                "kind": "Listing",
+                "data": {
+                    "children": [
+                        {
+                            "kind": "t3",
+                            "data": {
+                                "title": "Hello",
+                                "author": "ada",
+                                "score": 12,
+                                "permalink": "/r/Python/comments/abc/hello/",
+                            },
+                        }
+                    ]
+                },
+            },
+        )
+
     settings = Settings(
         reddit_client_id="",
         reddit_client_secret="",
+        reddit_min_interval_seconds=0,
+        reddit_browser_impersonate=False,
+        allow_private_networks=True,
+        cache_enabled=False,
         log_json=False,
         log_level="ERROR",
-        respect_robots_default=True,
-        cache_enabled=False,
     )
-    with pytest.raises(DungScraperError) as caught:
-        await scrape_url(
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        data = await scrape_url(
             ScrapeRequest(url="https://www.reddit.com/r/Python/", respect_robots=True, cache=False),
             settings=settings,
+            client=client,
         )
-    assert caught.value.code == "reddit_not_configured"
-    assert "robots.txt" in caught.value.message
-    assert "DUNGSCRAPER_REDDIT_CLIENT_ID" in caught.value.message
-    assert REDDIT_SETUP.split()[0] in caught.value.message
+    assert data.fetch_tier == "reddit_json"
+    assert "reddit_json" in data.warnings
+    assert "reddit_not_configured" not in data.warnings
+    assert "Hello" in (data.markdown or "")
+    assert "u/ada" in (data.markdown or "")
 
 
 def test_other_adapters_parse_public_urls():
@@ -150,6 +197,150 @@ async def test_selector_mode_does_not_call_an_llm():
     )
     assert data.model == "selector"
     assert data.results[0].data["name"] == "Ada"
+
+
+@pytest.mark.asyncio
+async def test_youtube_watch_page_captions_when_the_list_is_empty():
+    track = "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en"
+    player = {
+        "videoDetails": {"title": "Talk"},
+        "captions": {
+            "playerCaptionsTracklistRenderer": {
+                "captionTracks": [
+                    {"baseUrl": track, "languageCode": "en", "kind": "asr"},
+                    {"baseUrl": track + "&kind=manual", "languageCode": "en"},
+                ]
+            }
+        },
+    }
+    page = "<html><script>var ytInitialPlayerResponse = " + json.dumps(player) + ";</script></html>"
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if request.url.path == "/api/timedtext" and request.url.params.get("type") == "list":
+            return httpx.Response(404, text="missing")
+        if request.url.path == "/watch":
+            return httpx.Response(200, text=page)
+        if "kind=manual" in str(request.url):
+            xml = "<transcript><text start='0'>Hello there from the watch page captions today</text></transcript>"
+            return httpx.Response(200, text=xml)
+        return httpx.Response(500, text="unexpected")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        data = await YouTubeAdapter().fetch(
+            ScrapeRequest(url="https://www.youtube.com/watch?v=dQw4w9WgXcQ", cache=False),
+            settings=Settings(log_json=False, allow_private_networks=True),
+            client=client,
+        )
+    assert data is not None
+    assert "watch page captions" in (data.markdown or "")
+    assert data.metadata.title == "Talk"
+    assert any("/watch" in url for url in seen)
+    assert any("kind=manual" in url for url in seen)
+
+
+@pytest.mark.asyncio
+async def test_youtube_list_endpoint_is_still_preferred():
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.params.get("type") == "list":
+            return httpx.Response(200, text='<transcript_list><track lang_code="en" lang_original="English"/></transcript_list>')
+        return httpx.Response(200, text="<transcript><text>Hello there from the timedtext list today</text></transcript>")
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        data = await YouTubeAdapter().fetch(
+            ScrapeRequest(url="https://youtu.be/dQw4w9WgXcQ", cache=False),
+            settings=Settings(log_json=False, allow_private_networks=True),
+            client=client,
+        )
+    assert data is not None
+    assert "timedtext list" in (data.markdown or "")
+    assert "/watch" not in seen
+
+
+def test_caption_helpers_prefer_manual_english_and_json3():
+    title, tracks = caption_tracks_from_watch(
+        '<script>ytInitialPlayerResponse = {"videoDetails":{"title":"Talk"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://example.com/a","languageCode":"en","kind":"asr"}]}}};</script>'
+    )
+    assert title == "Talk"
+    assert pick_caption_track(tracks)["kind"] == "asr"
+    manual = pick_caption_track(
+        [
+            {"languageCode": "en", "kind": "asr", "baseUrl": "a"},
+            {"languageCode": "en", "baseUrl": "b"},
+        ]
+    )
+    assert manual["baseUrl"] == "b"
+    text = captions_to_markdown("Talk", '{"events":[{"segs":[{"utf8":"Hello there from json3 captions now"}]}]}')
+    assert "json3 captions" in text
+
+
+@pytest.mark.asyncio
+async def test_scrape_renders_an_rss_url_as_items():
+    feed = """<?xml version="1.0"?><rss><channel><title>News</title><item>
+      <title>Hello feed</title><link>https://example.com/hello</link>
+      <description>A long enough description of the post for the feed reader to keep.</description>
+    </item></channel></rss>"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        assert request.url.path == "/feed.xml"
+        return httpx.Response(200, text=feed, headers={"content-type": "application/rss+xml"})
+
+    settings = Settings(allow_private_networks=True, cache_enabled=False, log_json=False, log_level="ERROR")
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        data = await scrape_url(
+            ScrapeRequest(url="https://example.com/feed.xml", cache=False, respect_robots=True),
+            settings=settings,
+            client=client,
+        )
+    assert data.render_mode == "rss"
+    assert data.fetch_tier == "feed"
+    assert "feed" in data.warnings
+    assert "Hello feed" in (data.markdown or "")
+    assert data.metadata.title == "News"
+
+
+@pytest.mark.asyncio
+async def test_read_feed_reports_a_robots_block_and_parses_items():
+    from dungscraper.core.feeds import fetch_feed
+
+    feed = """<?xml version="1.0"?><rss><channel><title>News</title><item>
+      <title>Hello feed</title><link>https://example.com/hello</link>
+      <dc:creator xmlns:dc="http://purl.org/dc/elements/1.1/">ada</dc:creator>
+      <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
+      <description>Notes from the feed.</description>
+    </item></channel></rss>"""
+
+    def allowed(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text="User-agent: *\nAllow: /\n")
+        return httpx.Response(200, text=feed, headers={"content-type": "application/rss+xml"})
+
+    settings = Settings(allow_private_networks=True, log_json=False, robots_user_agent="DungScraperBot/0.1")
+    transport = httpx.MockTransport(allowed)
+    async with httpx.AsyncClient(transport=transport) as client:
+        data = await fetch_feed("https://example.com/feed.xml", settings=settings, client=client, limit=5)
+    assert data["title"] == "News"
+    assert data["items"][0]["title"] == "Hello feed"
+    assert data["items"][0]["author"] == "ada"
+    assert "2024" in data["items"][0]["published"]
+
+    def blocked(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="User-agent: *\nDisallow: /\n")
+
+    transport = httpx.MockTransport(blocked)
+    async with httpx.AsyncClient(transport=transport) as client:
+        with pytest.raises(DungScraperError) as caught:
+            await fetch_feed("https://example.com/feed.xml", settings=settings, client=client)
+    assert caught.value.code == "robots_disallowed"
 
 
 def test_markdown_diff_detects_a_change():
