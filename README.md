@@ -12,7 +12,7 @@ Self-hosted web scraping and crawling for AI agents. One tool turns a URL into M
 - **Public company info.** Business emails with the page where each was found, and job links tagged junior and remote.
 - **Polite.** Respects robots.txt.
 
-Version 0.3.1 keeps the 0.2.0 contacts and jobs tools and reads Reddit with no API key.
+Version 0.3.2 keeps the 0.2.0 contacts and jobs tools, reads Reddit with no API key, and waits through "preparing your page" interstitials that set a cookie and reload.
 
 ## Kas naujo
 
@@ -132,7 +132,7 @@ curl -s http://127.0.0.1:8741/v1/scrape \
 
 `formats` can include `markdown`, `html` (cleaned), `raw_html`, `links`, `metadata`, `screenshot`, and `chunks`.
 
-`render` is `auto` (default), `http`, or `browser`. Auto uses HTTP first, then Chromium when the page is a script shell, the body is empty, or the status is a block or challenge (403, 429, interstitial text). Screenshots, waits, and actions also use the browser. The browser hides the automation flag and sends a normal desktop fingerprint. PDF and DOCX URLs stay on HTTP with a plain user agent, because some hosts answer a Chrome user agent with a challenge page.
+`render` is `auto` (default), `http`, or `browser`. Auto uses HTTP first, then Chromium when the page is a script shell, the body is empty, or the status is a block or challenge (403, 429, interstitial text). Screenshots, waits, and actions also use the browser. The browser hides the automation flag and sends a normal desktop fingerprint. When Playwright's own Chromium is not installed, DungScraper uses the Chrome or Edge already on the machine (Edge ships with Windows), so no 150 MB download is needed. Pin one with `DUNGSCRAPER_BROWSER_CHANNEL` (`chrome`, `msedge`) or `DUNGSCRAPER_BROWSER_EXECUTABLE`. A short page that reloads itself after a few seconds is waited out for up to `DUNGSCRAPER_INTERSTITIAL_WAIT_SECONDS` (default 15) before the page is read. PDF and DOCX URLs stay on HTTP with a plain user agent, because some hosts answer a Chrome user agent with a challenge page.
 
 `onlyMainContent` defaults to true: nav, cookie banners, and obvious ads are removed, and the better of Trafilatura, Readability, and the `<article>` element is kept. Tables and code blocks dropped by one extractor are copied back from another. Set it to false for the full page. Links and image URLs are absolute.
 

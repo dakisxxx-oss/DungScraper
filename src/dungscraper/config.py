@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = 30
     browser_timeout_seconds: float = 45
     browser_concurrency: int = 3
+    browser_channel: str = ""
+    browser_executable: str = ""
+    interstitial_wait_seconds: float = 15
     allow_private_networks: bool = False
     proxy_url: str = ""
     proxy_urls: str = ""

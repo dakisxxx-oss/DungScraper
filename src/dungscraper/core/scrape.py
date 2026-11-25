@@ -222,7 +222,7 @@ async def scrape_url(
                 fetched.warnings.append("upgraded_to_browser:js_shell")
                 browser_fetch = await _maybe_browser(request, settings, browser_mgr)
                 browser_fetch.warnings = [*fetched.warnings, *browser_fetch.warnings]
-                browser_fetch.tier = browser_fetch.tier or "playwright"
+                browser_fetch.tier = "playwright"
                 fetched = browser_fetch
             elif reason == "challenge" and request.render == "auto":
                 fetched.warnings.append("challenge_detected")

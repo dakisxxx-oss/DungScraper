@@ -481,7 +481,7 @@ def _public_headers(settings: Settings, accept: str) -> dict[str, str]:
 
 def _arctic_headers() -> dict[str, str]:
     return {
-        "User-Agent": "dungscraper/0.3.1 (+https://github.com/dakisxxx-oss/DungScraper)",
+        "User-Agent": "dungscraper/0.3.2 (+https://github.com/dakisxxx-oss/DungScraper)",
         "Accept": "application/json",
         "Accept-Encoding": "gzip, deflate",
     }
@@ -1386,23 +1386,12 @@ def _comment_tree(rows: list[dict], post_id: str) -> list[dict]:
     return roots
 
 
-async def chromium_installed() -> bool:
-    """True when Playwright can launch its downloaded Chromium."""
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError:
-        return False
-    try:
-        playwright = await async_playwright().start()
-    except Exception:
-        return False
-    try:
-        path = playwright.chromium.executable_path
-        return bool(path and os.path.exists(path))
-    except Exception:
-        return False
-    finally:
-        await playwright.stop()
+async def chromium_installed(settings: Settings | None = None) -> bool:
+    """True when Playwright can start Chromium: bundled, pinned, or installed Chrome/Edge."""
+    from dungscraper.config import get_settings
+    from dungscraper.core.fetch import browser_available
+
+    return await browser_available(settings or get_settings())
 
 
 async def _fetch_browser(
@@ -1411,7 +1400,7 @@ async def _fetch_browser(
     parsed: dict,
     attempts: list[str],
 ) -> tuple[ScrapeData | None, bool]:
-    if not await chromium_installed():
+    if not await chromium_installed(settings):
         attempts.append("browser: chromium not installed")
         return None, True
     try:
@@ -1543,10 +1532,12 @@ _SHREDDIT_JS = """
 async def _read_shreddit(settings: Settings, parsed: dict, request: ScrapeRequest) -> dict | None:
     from playwright.async_api import async_playwright
 
+    from dungscraper.core.fetch import launch_chromium
+
     playwright = await async_playwright().start()
     browser = None
     try:
-        browser = await playwright.chromium.launch(headless=True, args=["--disable-dev-shm-usage", "--no-sandbox"])
+        browser = await launch_chromium(playwright, settings, args=["--disable-dev-shm-usage", "--no-sandbox"])
         page = await browser.new_page(user_agent=settings.fetch_user_agent, locale="en-US")
         url = "https://www.reddit.com" + _resource_path(parsed)
         await page.goto(url, wait_until="domcontentloaded", timeout=int(request.timeout_ms or 25000))

@@ -125,7 +125,7 @@ POST_HTML = """
 def _reset_reddit_state(monkeypatch):
     reset_reddit_throttle()
 
-    async def no_browser() -> bool:
+    async def no_browser(*_args) -> bool:
         return False
 
     monkeypatch.setattr(reddit_mod, "chromium_installed", no_browser)
@@ -589,7 +589,7 @@ def test_shreddit_listing_marks_the_browser_source():
 
 @pytest.mark.asyncio
 async def test_browser_step_runs_only_when_chromium_is_installed(monkeypatch):
-    async def browser_ready() -> bool:
+    async def browser_ready(*_args) -> bool:
         return True
 
     async def fake_read(settings, parsed, request):

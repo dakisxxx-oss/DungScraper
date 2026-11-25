@@ -37,7 +37,7 @@ Reddit veikia be raktų. Pavyzdys: „Use the DungScraper reddit tool to list ho
 - **Crawl-delay.** robots.txt pauzė gerbiama, bet ne ilgiau kaip 10 sekundžių.
 - **YouTube titrai.** Jei senasis caption sąrašas tuščias, titrai imami iš paties vaizdo puslapio.
 - **Kontaktai ir darbai.** `find_contacts_tool` renka viešus įmonės el. paštus, `find_jobs_tool` — darbo skelbimų nuorodas.
-- **Reddit 0.3.1.** Jei viešas JSON nukreipia į prisijungimą, skaitomas Arctic Shift archyvas. Naršyklės žingsnis veikia tik po `python -m playwright install chromium`.
+- **Reddit 0.3.1.** Jei viešas JSON nukreipia į prisijungimą, skaitomas Arctic Shift archyvas. Naršyklės žingsnis veikia po `python -m playwright install chromium` arba su kompiuteryje jau įdiegta Chrome / Edge naršykle.
 
 ## English instructions
 

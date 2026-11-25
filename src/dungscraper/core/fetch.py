@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from bs4 import BeautifulSoup
 from playwright.async_api import Browser, async_playwright
 
 from dungscraper.config import Settings
-from dungscraper.core.content import is_challenge
+from dungscraper.core.content import is_challenge, looks_js_heavy
 from dungscraper.core.urls import safe_url
 from dungscraper.errors import DungScraperError
 from dungscraper.log import get_logger
@@ -297,6 +299,89 @@ Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
 """
 
 
+def _visible_words(html: str) -> int:
+    soup = BeautifulSoup(html or "", "lxml")
+    for tag in soup(["script", "style", "noscript", "svg"]):
+        tag.decompose()
+    return len(soup.get_text(" ", strip=True).split())
+
+
+INTERSTITIAL_HINTS = (
+    'http-equiv="refresh"',
+    "http-equiv='refresh'",
+    "location.reload",
+    "eval(decodeuricomponent(escape(",  # hex-escaped self-reloading challenge scripts
+    "checking your browser",
+    "please wait",
+    "preparing",
+    "redirecting",
+)
+
+
+def _self_reloads(html: str) -> bool:
+    """True when the page looks like a wait-then-reload screen, not an empty app shell."""
+    lowered = (html or "").lower()
+    return any(hint in lowered for hint in INTERSTITIAL_HINTS)
+
+
+def is_interstitial(html: str, status: int = 200) -> bool:
+    """A challenge page, or a tiny script-driven shell that usually reloads itself."""
+    return is_challenge(html, status) or looks_js_heavy(html)
+
+
+SYSTEM_BROWSER_CHANNELS = ("chrome", "msedge")
+
+
+def _missing_browser(exc: Exception) -> bool:
+    text = str(exc)
+    return "Executable doesn't exist" in text or "playwright install" in text or "distribution" in text
+
+
+async def launch_chromium(playwright, settings: Settings, *, args: list[str], **kwargs):
+    """Launch Chromium: pinned channel or path, then bundled build, then installed Chrome or Edge.
+
+    Windows ships Edge, so a plain install can render pages without
+    ``python -m playwright install chromium``. Set DUNGSCRAPER_BROWSER_CHANNEL
+    (chrome, msedge, chrome-beta...) or DUNGSCRAPER_BROWSER_EXECUTABLE to pin one.
+    """
+    if settings.browser_executable.strip():
+        return await playwright.chromium.launch(
+            headless=True, args=args, executable_path=settings.browser_executable.strip(), **kwargs
+        )
+    if settings.browser_channel.strip():
+        return await playwright.chromium.launch(
+            headless=True, args=args, channel=settings.browser_channel.strip(), **kwargs
+        )
+    try:
+        return await playwright.chromium.launch(headless=True, args=args, **kwargs)
+    except Exception as exc:  # noqa: BLE001
+        if not _missing_browser(exc):
+            raise
+        first = exc
+    for channel in SYSTEM_BROWSER_CHANNELS:
+        try:
+            return await playwright.chromium.launch(headless=True, args=args, channel=channel, **kwargs)
+        except Exception:  # noqa: BLE001
+            continue
+    raise first
+
+
+async def browser_available(settings: Settings) -> bool:
+    """True when Playwright can start some Chromium: bundled, pinned, Chrome or Edge."""
+    try:
+        playwright = await async_playwright().start()
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        browser = await launch_chromium(playwright, settings, args=["--no-sandbox"])
+        await browser.close()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        await playwright.stop()
+
+
 class BrowserManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -319,8 +404,9 @@ class BrowserManager:
         async with self._lock:
             if self._browser is None:
                 self._playwright = await async_playwright().start()
-                self._browser = await self._playwright.chromium.launch(
-                    headless=True,
+                self._browser = await launch_chromium(
+                    self._playwright,
+                    self.settings,
                     args=[
                         "--disable-dev-shm-usage",
                         "--no-sandbox",
@@ -329,6 +415,40 @@ class BrowserManager:
                     ignore_default_args=["--enable-automation"],
                 )
         return self._browser
+
+    async def _wait_out_interstitial(self, page, html: str, status: int) -> str:
+        """Let a "checking your browser" page finish and reload into the real one.
+
+        Many sites serve a short page whose script sets a cookie after a few
+        seconds and reloads. A real browser passes that on its own, so this
+        only waits, polls the visible text, and re-reads the DOM once it grows.
+        """
+        budget = max(self.settings.interstitial_wait_seconds, 1)
+        if not (is_challenge(html, status) or _self_reloads(html)):
+            # A plain script-driven shell either renders fast or stays empty.
+            budget = min(budget, 4)
+        deadline = time.monotonic() + budget
+        baseline = _visible_words(html)
+        while time.monotonic() < deadline:
+            await page.wait_for_timeout(750)
+            try:
+                current = await page.content()
+            except Exception:  # noqa: BLE001
+                # The page is mid-navigation. Try again on the next tick.
+                continue
+            words = _visible_words(current)
+            if words >= max(40, baseline * 3) and not is_challenge(current, 200):
+                try:
+                    await page.wait_for_load_state("load", timeout=5000)
+                except Exception:  # noqa: BLE001
+                    pass
+                await page.wait_for_timeout(500)
+                try:
+                    return await page.content()
+                except Exception:  # noqa: BLE001
+                    return current
+            html = current
+        return html
 
     async def fetch(
         self,
@@ -431,19 +551,8 @@ class BrowserManager:
                         ) from exc
                 html = await page.content()
                 status = response.status if response is not None else 200
-                if is_challenge(html, status):
-                    try:
-                        await page.wait_for_function(
-                            """() => {
-                                const title = (document.title || '').toLowerCase();
-                                const words = (document.body && document.body.innerText || '').trim().split(/\\s+/).length;
-                                return !title.includes('just a moment') && words > 40;
-                            }""",
-                            timeout=8000,
-                        )
-                    except Exception:
-                        pass
-                    html = await page.content()
+                if is_interstitial(html, status):
+                    html = await self._wait_out_interstitial(page, html, status)
                 shot = None
                 if screenshot:
                     shot = await page.screenshot(type="jpeg", quality=74, full_page=screenshot_full_page)
