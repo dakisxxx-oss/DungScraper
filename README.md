@@ -1,6 +1,7 @@
 <p align="center"><img src="https://raw.githubusercontent.com/dakisxxx-oss/DungScraper/main/docs/hero.svg" alt="DungScraper" width="100%"></p>
 
 <p align="center">
+<a href="https://pypi.org/project/dungscraper/"><img alt="PyPI" src="https://img.shields.io/pypi/v/dungscraper"></a>
 <img alt="version" src="https://img.shields.io/badge/version-0.6.0-2dd4bf">
 <img alt="license" src="https://img.shields.io/badge/license-MIT-f59e0b">
 <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
@@ -16,10 +17,12 @@
 ## 30-second quickstart
 
 ```bash
-pip install git+https://github.com/dakisxxx-oss/DungScraper.git
+pip install dungscraper
 python -m playwright install chromium     # only needed for JavaScript-heavy pages
 dungscraper doctor                        # checks your setup
 ```
+
+For the latest code on `main`, `pip install git+https://github.com/dakisxxx-oss/DungScraper.git`.
 
 Add it to Claude Desktop, Cursor or any MCP client:
 
@@ -98,7 +101,7 @@ The full reference is in [docs/REFERENCE.md](https://github.com/dakisxxx-oss/Dun
 
 ## Roadmap
 
-- [ ] Publish to PyPI
+- [x] Publish to PyPI
 - [ ] Scheduled `watch` with email or Telegram alerts
 - [ ] More local site readers (aruodas.lt, other classifieds)
 - [ ] An LLM-driven browsing agent on top of `research`

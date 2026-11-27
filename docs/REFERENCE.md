@@ -32,7 +32,7 @@ cd DungScraper
 
 On macOS or Linux run `./install.sh` instead of `.\install.ps1`. Add `-NoBrowser` (Windows) or `--no-browser` (macOS, Linux) to skip the 150 MB Chromium download; plain HTTP scraping still works, JavaScript-only pages do not. The installers are safe to run again. If PowerShell blocks the script, run `powershell -ExecutionPolicy Bypass -File .\install.ps1`.
 
-Other ways: `pip install git+https://github.com/dakisxxx-oss/DungScraper.git`, then `python -m playwright install chromium`, or Docker (below). `dungscraper install-claude` is optional and adds the tools to Claude Desktop ([INSTALL_CLAUDE.md](../INSTALL_CLAUDE.md)).
+Other ways: `pip install dungscraper`, then `python -m playwright install chromium`. For the latest code on `main`, `pip install git+https://github.com/dakisxxx-oss/DungScraper.git`. Or Docker (below). `dungscraper install-claude` is optional and adds the tools to Claude Desktop ([INSTALL_CLAUDE.md](../INSTALL_CLAUDE.md)).
 
 ## Use it
 
