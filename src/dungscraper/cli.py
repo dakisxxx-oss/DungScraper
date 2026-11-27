@@ -14,7 +14,15 @@ from pydantic import ValidationError
 
 from dungscraper.client import DungScraper
 from dungscraper.errors import DungScraperError
-from dungscraper.local import local_contacts, local_crawl, local_jobs, local_map, local_scrape, local_search
+from dungscraper.local import (
+    local_contacts,
+    local_crawl,
+    local_jobs,
+    local_map,
+    local_scrape,
+    local_search,
+    local_watch,
+)
 from dungscraper.models import ContactsRequest, CrawlRequest, JobsRequest, MapRequest, SearchRequest
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="DungScraper scrapes and crawls the web for agents.")
@@ -351,6 +359,23 @@ def jobs(
             with _client(base_url, api_key) as client:
                 data = client.jobs(url, limit=limit, render=render)
         typer.echo(format_jobs(data, fmt))
+    except DungScraperError as exc:
+        _echo_error(exc)
+
+
+@app.command()
+def watch(
+    url: str,
+    pages: int = typer.Option(1, min=1, max=10, help="Listing pages to read, following the next-page link."),
+    reset: bool = typer.Option(False, help="Forget the saved snapshot and start over."),
+    no_save: bool = typer.Option(False, "--no-save", help="Compare only, do not overwrite the snapshot."),
+    render: str = typer.Option("auto", help="auto, http or browser."),
+    as_json: bool = typer.Option(False, "--json", help="Print the full result."),
+) -> None:
+    """Say what changed since the last run: new ads, gone ads and price changes, or a text diff."""
+    try:
+        data = asyncio.run(local_watch(url, pages=pages, save=not no_save, reset=reset, render=render))
+        typer.echo(_dump(data) if as_json else data["report"])
     except DungScraperError as exc:
         _echo_error(exc)
 

@@ -153,6 +153,7 @@ class ScrapeData(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     block_reason: str | None = None
     fetch_tier: str | None = None
+    structured: dict[str, Any] | None = None
 
 
 class ErrorBody(BaseModel):

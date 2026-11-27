@@ -2,5 +2,5 @@
 
 from dungscraper.client import DungScraper, DungScraperAPIError
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"
 __all__ = ["DungScraper", "DungScraperAPIError", "__version__"]

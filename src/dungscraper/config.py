@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     browser_channel: str = ""
     browser_executable: str = ""
     interstitial_wait_seconds: float = 15
+    data_dir: str = ""
     allow_private_networks: bool = False
     proxy_url: str = ""
     proxy_urls: str = ""

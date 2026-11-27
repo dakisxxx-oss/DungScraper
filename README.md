@@ -12,7 +12,7 @@ Self-hosted web scraping and crawling for AI agents. One tool turns a URL into M
 - **Public company info.** Business emails with the page where each was found, and job links tagged junior and remote.
 - **Polite.** Respects robots.txt.
 
-Version 0.3.2 keeps the 0.2.0 contacts and jobs tools, reads Reddit with no API key, and waits through "preparing your page" interstitials that set a cookie and reload.
+Version 0.4.0 adds structured reading of skelbiu.lt and autoplius.lt, a `watch` tool for new ads and price changes, and JSON-LD / OpenGraph data on any page. Version 0.3.2 keeps the 0.2.0 contacts and jobs tools, reads Reddit with no API key, and waits through "preparing your page" interstitials that set a cookie and reload.
 
 ## Kas naujo
 
@@ -138,7 +138,19 @@ curl -s http://127.0.0.1:8741/v1/scrape \
 
 `DUNGSCRAPER_PROXY_URLS` is an optional comma-separated list. Requests rotate through it. A per-request `proxy` overrides the list.
 
-### Reddit and other site APIs
+### skelbiu.lt
+
+`scrape` on a skelbiu.lt category or listing page returns a Markdown table of the ads (title, price, price change, location, age, details, URL) and a `structured.listings` list in `--json` output, with the next-page URL. An ad page returns title, price, condition, location, category path, attributes, features, description, images, update time and public seller facts (member since, ad counts, profile link) in `structured`. Phone numbers behind the reveal button are never fetched, and a masked phone shown in place of a seller name is dropped. robots.txt applies: skelbiu.lt disallows `?keywords=` search URLs and `?orderBy=`, so DungScraper refuses those; browse category URLs such as `/skelbimai/transportas/dviraciai/` (and `/2`, `/3` for later pages) instead.
+
+## Watch a page for changes
+
+`dungscraper watch URL [--pages 3]` (MCP tool `watch_page_tool`) saves a snapshot the first time and, on later runs, lists new ads, gone ads and price changes for listing pages, or a text diff for other pages. Snapshots are small JSON files in `~/.dungscraper/watch` (`DUNGSCRAPER_DATA_DIR` changes it). `--no-save` compares without overwriting, `--reset` starts over. Run it from a schedule to get alerts.
+
+## Structured data on any page
+
+`scrape --json` returns `structured`: schema.org JSON-LD nodes (Product, Article, JobPosting, Event, Recipe...) and OpenGraph tags when the page has them. autoplius.lt category and ad pages get the same listing and ad structure as skelbiu.lt.
+
+## Reddit and other site APIs
 
 Reddit works with no API key. A subreddit listing (`hot`, `new`, `top`, `rising`), a post and its comments, a search, or a user page is read in this order:
 

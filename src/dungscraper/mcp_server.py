@@ -47,6 +47,7 @@ INSTRUCTIONS = (
     "A clipped scrape includes an outline of headings and the offset to jump there. "
     "find_contacts_tool reads public company emails and careers links. "
     "find_jobs_tool lists job posting links. "
+    "watch_page_tool reports new ads, gone ads and price changes on listing pages, or a text diff. "
     "robots.txt is respected unless respect_robots is false."
 )
 
@@ -387,6 +388,33 @@ def build_mcp() -> MCPServer:
         except DungScraperError as exc:
             raise ToolError(f"{exc.code}: {exc.message}") from exc
         return _dump(data)
+
+    @mcp.tool(description=(
+        "Watch a page for changes. On a listing page (skelbiu.lt, autoplius.lt category pages) it reports new ads, "
+        "removed ads and price changes since the last call; on any other page it returns a text diff. "
+        "The first call saves a snapshot and reports nothing else. pages (1-10) follows the next-page link. "
+        "save=false compares without overwriting the snapshot. robots.txt is respected."
+    ))
+    async def watch_page_tool(url: str, pages: int = 1, save: bool = True, reset: bool = False, render: str = "auto") -> str:
+        from dungscraper.core.watch import watch_page
+
+        try:
+            services = current()
+            if services is None:
+                services = await startup(get_settings())
+            data = await watch_page(
+                url,
+                settings=services.settings,
+                client=services.client,
+                browser=services.browser,
+                pages=pages,
+                save=save,
+                reset=reset,
+                render=render,
+            )
+        except DungScraperError as exc:
+            raise ToolError(f"{exc.code}: {exc.message}") from exc
+        return data["report"]
 
     @mcp.tool(description=(
         "Find public business email addresses and careers links for a company site. "

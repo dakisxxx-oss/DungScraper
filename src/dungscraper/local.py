@@ -121,3 +121,21 @@ async def local_jobs(request) -> dict:
         return _dump(data)
 
     return await with_services(work)
+
+
+async def local_watch(url: str, *, pages: int = 1, save: bool = True, reset: bool = False, render: str = "auto") -> dict:
+    from dungscraper.core.watch import watch_page
+
+    async def work(services: Services) -> dict:
+        return await watch_page(
+            url,
+            settings=services.settings,
+            client=services.client,
+            browser=services.browser,
+            pages=pages,
+            save=save,
+            reset=reset,
+            render=render,
+        )
+
+    return await with_services(work)

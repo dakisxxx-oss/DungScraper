@@ -14,7 +14,9 @@ from dungscraper.adapters import adapter_for, fetch_via_adapter
 from dungscraper.config import Settings, get_settings
 from dungscraper.core.cache import Cache, NullCache
 from dungscraper.core.chunk import chunk_markdown
-from dungscraper.core.content import challenge_vendor, html_to_content, is_challenge, should_escalate
+from dungscraper.core.content import Extracted, challenge_vendor, html_to_content, is_challenge, should_escalate
+from dungscraper.core.sites import site_extract
+from dungscraper.core.structured import page_structured_data
 from dungscraper.core.escalate import escalate_challenge
 from dungscraper.core.documents import docx_to_markdown, pdf_to_markdown
 from dungscraper.core.feeds import items_to_markdown, looks_like_feed, parse_feed
@@ -269,6 +271,18 @@ async def scrape_url(
                 exclude_selectors=request.exclude_selectors,
                 include_selectors=request.include_selectors,
             )
+            site = site_extract(fetched.url, fetched.text or "")
+            structured = None
+            if site is not None:
+                extracted = Extracted(
+                    markdown=site.markdown,
+                    html=extracted.html,
+                    links=site.links or extracted.links,
+                    metadata=extracted.metadata.model_copy(update={"title": site.title}),
+                )
+                structured = site.structured
+            else:
+                structured = page_structured_data(fetched.text or "")
             chunks = None
             if "chunks" in request.formats:
                 options = request.chunk or ChunkOptions()
@@ -282,6 +296,8 @@ async def scrape_url(
             if fetched.screenshot:
                 screenshot = base64.b64encode(fetched.screenshot).decode("ascii")
             warnings = list(fetched.warnings)
+            if site is not None:
+                warnings.append(f"site_extractor:{site.kind}")
             if request.render == "http" and "screenshot" in request.formats:
                 warnings.append("screenshot_requires_browser")
             data = ScrapeData(
@@ -297,6 +313,7 @@ async def scrape_url(
                 content_type=fetched.content_type,
                 render_mode=fetched.render_mode,
                 warnings=warnings,
+                structured=structured,
             )
         extract_ms = int((time.perf_counter() - extract_started) * 1000)
         data.timings_ms = {
