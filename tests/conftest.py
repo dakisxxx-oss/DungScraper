@@ -5,6 +5,12 @@ os.environ.setdefault("DUNGSCRAPER_LOG_LEVEL", "WARNING")
 os.environ.setdefault("DUNGSCRAPER_API_KEYS", "")
 os.environ.setdefault("DUNGSCRAPER_REDIS_URL", "")
 os.environ.pop("DUNGSCRAPER_BASE_URL", None)
+# CI (GITHUB_ACTIONS) makes typer/rich emit ANSI codes even when captured, which splits
+# strings like "--pages" in --help output. Tests must see plain text.
+for _var in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS"):
+    os.environ.pop(_var, None)
+os.environ["NO_COLOR"] = "1"
+os.environ["TERM"] = "dumb"
 
 import pytest
 

@@ -176,7 +176,10 @@ def test_cli_watch_help_and_mcp_tool_registered():
     from dungscraper.cli import app
 
     out = CliRunner().invoke(app, ["watch", "--help"])
-    assert out.exit_code == 0 and "--pages" in out.output
+    import re
+
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", out.output)
+    assert out.exit_code == 0 and "--pages" in plain
     from dungscraper.mcp_server import build_mcp
 
     assert build_mcp() is not None
