@@ -14,7 +14,7 @@ Self-hosted web scraping and crawling for AI agents. One tool turns a URL into M
 - **Public company info.** Business emails with the page where each was found, and job links tagged junior and remote.
 - **Polite.** Respects robots.txt.
 
-Version 0.5.0 adds an MCP banner (`DUNGSCRAPER_BANNER=0` turns it off), CSS/XPath extraction with no LLM (`extract-css`, `/v1/extract/css`, MCP `extract_fields`), query-focused reading under a token budget (`focus`, `/v1/focus`, MCP `read_focused`), a Jina-style reader at `GET /r/<url>`, Firecrawl-style metadata names and format aliases on `/v1/scrape`, and `dungscraper doctor`. Version 0.4.0 added structured reading of skelbiu.lt and autoplius.lt, a `watch` tool for new ads and price changes, and JSON-LD / OpenGraph data on any page. Version 0.3.2 keeps the 0.2.0 contacts and jobs tools, reads Reddit with no API key, and waits through "preparing your page" interstitials that set a cookie and reload.
+Version 0.6.0 adds bring-your-own proxy rotation with health and backoff, concurrent batch scraping with per-host limits, an optional disk cache, best-first/DFS/BFS crawling with URL scorers and filters, a `research` tool that answers a question with cited passages and no model, and self-host API-key rate limits with a usage endpoint (see below). Version 0.5.0 added an MCP banner (`DUNGSCRAPER_BANNER=0` turns it off), CSS/XPath extraction with no LLM (`extract-css`, `/v1/extract/css`, MCP `extract_fields`), query-focused reading under a token budget (`focus`, `/v1/focus`, MCP `read_focused`), a Jina-style reader at `GET /r/<url>`, Firecrawl-style metadata names and format aliases on `/v1/scrape`, and `dungscraper doctor`. Version 0.4.0 added structured reading of skelbiu.lt and autoplius.lt, a `watch` tool for new ads and price changes, and JSON-LD / OpenGraph data on any page. Version 0.3.2 keeps the 0.2.0 contacts and jobs tools, reads Reddit with no API key, and waits through "preparing your page" interstitials that set a cookie and reload.
 
 ## Earlier changes
 
@@ -65,15 +65,64 @@ Use these for public company information only. See [SECURITY.md](../SECURITY.md)
 
 DungScraper is Python on purpose. [Trafilatura](https://github.com/adbar/trafilatura) is still the strongest open-source main-content extractor, and it is Python-only. The same language then covers FastAPI, Playwright, PyMuPDF, the MCP server, the SDK, and the CLI, so there is one process model to deploy.
 
+## Proxies, batch and cache
+
+**Bring your own proxies.** DungScraper bundles no proxy service. Give it a list and it rotates:
+
+```bash
+export DUNGSCRAPER_PROXIES="http://user:pass@proxy1:8080,socks5://proxy2:1080"
+# or one per line in a file (lines starting with # are ignored)
+export DUNGSCRAPER_PROXY_FILE=~/proxies.txt
+```
+
+Entries can be `http://`, `https://`, `socks5://`, `socks5h://`, `socks4://`, or bare `host:port` (taken as HTTP). Each site sticks to one proxy while it works. A transport error, 403 or 429 puts that proxy on a cool-down **for that site** (30 s, doubling to 15 minutes while it keeps failing) and the request is retried on the next healthy proxy, up to four attempts. A success clears the cool-down. When every proxy is cooling down the one that recovers first is used rather than stalling. The same pool serves the plain HTTP path and the browser path (including the retry after a script shell). `dungscraper doctor` shows the pool with passwords hidden. Responses carry warnings such as `proxy_blocked_403:http://host:port` and `proxy_rotated:http:2_attempts`. Health state is in memory, per process. The final challenge-escalation tier uses the proxy chosen for the request and does not rotate by itself.
+
+**Batch.** `POST /v1/batch/scrape`, the `batch_scrape` MCP tool (50 URLs) and `dungscraper batch URL...` run concurrently. `concurrency` caps requests in flight, `perHostConcurrency` (default 2) caps them per site, and `delay`/`--delay-ms` spaces request starts on one site. Results keep input order and failures are per URL.
+
+**Disk cache.** `DUNGSCRAPER_CACHE_DIR=~/.dungscraper/cache` stores responses as JSON files (TTL from `DUNGSCRAPER_CACHE_TTL_SECONDS`, pruned beyond `DUNGSCRAPER_CACHE_MAX_FILES`, default 5000). Redis, when configured, takes precedence.
+
+## Crawl strategies and scoring
+
+`strategy` is `bfs` (default), `dfs` or `best_first`. `best_first` always fetches the highest-scoring link in the frontier. A link's score is the weighted mean of the `scorers` you pick (default all four), from 0 to 1:
+
+| Scorer | Rewards |
+| --- | --- |
+| `keyword` | `keywords` found in the link text (full credit) or URL (0.8). Dropped when no keywords are given. |
+| `depth` | Pages closer to the start. |
+| `freshness` | Newer years in the URL path (`/2026/11/`). No year scores 0.3. |
+| `authority` | Same site over subdomain over other sites, and short URLs without a query string. |
+
+`scorerWeights` changes the weights (keyword defaults to 3, the rest to 1). A link also inherits a little of the keyword relevance of the page it was found on. `minScore` drops weak links before they are queued. Filters: `includePaths`/`excludePaths` (aliases `includePatterns`/`excludePatterns`) take globs (`/docs/**`), `re:regex`, or a full-URL glob (`https://site/blog/*`). `contentTypes` (for example `["text/html"]`) skips other responses. Each stored page has `crawl_score`.
+
+```bash
+dungscraper crawl https://example.com --local --strategy best_first --keywords "pricing,plans" --limit 10 --min-score 0.4 --content-types text/html
+```
+
+## Research
+
+`POST /v1/research`, the `research` MCP tool and `dungscraper research "question"` need no model. They search (keyless DuckDuckGo, or Brave/Serper/SearXNG when configured), fetch the top pages, and follow the most promising links on pages that mention enough of your words. They stop at `maxPages` (default 8) or `maxSeconds` (default 60). Every section of every page is then ranked together with BM25, and the best passages come back with their source, plus a brief with numbered citations. Link lists, share buttons and similar page chrome are filtered out.
+
+```bash
+dungscraper research "How does BM25 ranking work?" --max-pages 5
+curl -s localhost:8741/v1/research -H 'content-type: application/json' -d '{"question":"How does BM25 ranking work?","maxPages":5}'
+```
+
+Add `synthesize: true` (`--synthesize`) to also get a written answer, when one of these is set: `DUNGSCRAPER_LLM_API_KEY` (or a custom `DUNGSCRAPER_LLM_BASE_URL` such as Ollama), `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` (model override: `DUNGSCRAPER_RESEARCH_MODEL`). With no key it says so in `notes` and still returns the passages, and a failed model call never fails the research.
+
+## Self-hosting
+
+See [DEPLOY.md](DEPLOY.md) for Docker, docker compose, Render, Fly.io and Railway. `dungscraper serve` refuses to bind beyond 127.0.0.1 without `DUNGSCRAPER_API_KEYS`. Keys are sent as `Authorization: Bearer <key>` or `X-API-Key`. Optional per-key limits answer `429` with `Retry-After` and `X-RateLimit-*` headers, and `GET /v1/usage` shows a key's counters (the key is never echoed, only a short id).
+
 ## Docker and manual setup
 
 Docker, from this directory:
 
 ```bash
+cp .env.example .env     # then set DUNGSCRAPER_API_KEYS in .env
 docker compose up --build
 ```
 
-That starts Redis, the `dungscraper` API, and `dungscraper-worker`. The image is `dungscraper`. The API listens on `127.0.0.1:8741` (this computer only). The dev key is `dungscraper-dev-key`; change `DUNGSCRAPER_API_KEYS` before you publish the port anywhere else.
+That starts Redis, the `dungscraper` API, and `dungscraper-worker`. The image is `dungscraper`. The API listens on `127.0.0.1:8741` (this computer only; set `DUNGSCRAPER_BIND=0.0.0.0` and put TLS in front to expose it). Compose refuses to start until `DUNGSCRAPER_API_KEYS` is set, and the container does not run without a key either.
 
 Without Docker:
 
@@ -85,7 +134,7 @@ python -m playwright install chromium
 dungscraper serve
 ```
 
-Open the playground at [http://127.0.0.1:8741](http://127.0.0.1:8741) and the API docs at [http://127.0.0.1:8741/docs](http://127.0.0.1:8741/docs). With no `DUNGSCRAPER_API_KEYS` set, auth is off so you can try it immediately. `docker compose` sets a key.
+Open the playground at [http://127.0.0.1:8741](http://127.0.0.1:8741) and the API docs at [http://127.0.0.1:8741/docs](http://127.0.0.1:8741/docs). With no `DUNGSCRAPER_API_KEYS` set, auth is off so you can try it immediately, and the server only listens on this computer. `docker compose` requires a key.
 
 ```bash
 curl -s http://127.0.0.1:8741/v1/scrape \
@@ -100,8 +149,10 @@ Health check: `GET /health` (no API key required).
 | | |
 | --- | --- |
 | `POST /v1/scrape` | One URL to Markdown. HTTP first, then Chromium on script shells, empty bodies, and challenge pages. |
-| `POST /v1/batch/scrape` | Up to 20 URLs. A failure on one URL does not fail the batch. |
-| `POST /v1/crawl` | A site, with depth, limit, path filters, sitemap, robots.txt, dedupe, and an optional webhook. |
+| `POST /v1/batch/scrape` | Up to 200 URLs with `concurrency`, `perHostConcurrency` and `delay` (ms between starts on one site). A failure on one URL does not fail the batch. |
+| `POST /v1/crawl` | A site, with depth, limit, `strategy` (`bfs`, `dfs`, `best_first`), link scoring, path and content-type filters, sitemap, robots.txt, dedupe, and an optional webhook. |
+| `POST /v1/research` | A question in, ranked passages with source URLs and a cited brief out. No model needed. |
+| `GET /v1/usage` | Requests made with your API key and what is left of its rate limit. |
 | `GET /v1/crawl/{id}` | Poll a crawl. `DELETE` cancels it. |
 | `POST /v1/map` | URLs from sitemaps plus links. `render=browser` reads JavaScript navigation. |
 | `POST /v1/search` | Search, then scrape the hits. Falls through providers when one rate-limits. |
@@ -138,7 +189,7 @@ curl -s http://127.0.0.1:8741/v1/scrape \
 
 `onlyMainContent` defaults to true: nav, cookie banners, and obvious ads are removed, and the better of Trafilatura, Readability, and the `<article>` element is kept. Tables and code blocks dropped by one extractor are copied back from another. Set it to false for the full page. Links and image URLs are absolute.
 
-`DUNGSCRAPER_PROXY_URLS` is an optional comma-separated list. Requests rotate through it. A per-request `proxy` overrides the list.
+Proxies: see [Proxies, batch and cache](#proxies-batch-and-cache). A per-request `proxy` overrides the pool.
 
 ### skelbiu.lt
 
@@ -338,7 +389,10 @@ See `.env.example`. The important ones:
 
 | Variable | Default | |
 | --- | --- | --- |
-| `DUNGSCRAPER_API_KEYS` | empty | Comma-separated. Empty disables auth. |
+| `DUNGSCRAPER_API_KEYS` | empty | Comma-separated. Empty disables auth, and `serve` then refuses any host except 127.0.0.1 unless `DUNGSCRAPER_ALLOW_OPEN_SERVER=true`. |
+| `DUNGSCRAPER_RATE_LIMIT_PER_MINUTE` / `_PER_DAY` | `0` | Per API key. `0` is unlimited. `DUNGSCRAPER_KEY_LIMITS=key=limit,key=limit` gives a key its own per-minute limit. |
+| `DUNGSCRAPER_PROXIES` | empty | Proxy pool. Also `DUNGSCRAPER_PROXY_URLS`, `DUNGSCRAPER_PROXY_URL` and `DUNGSCRAPER_PROXY_FILE`. |
+| `DUNGSCRAPER_CACHE_DIR` | empty | Keep the cache on disk so it survives restarts. |
 | `DUNGSCRAPER_REDIS_URL` | empty | Cache and crawl queue. |
 | `DUNGSCRAPER_CRAWL_MODE` | `auto` | `inline` without Redis, `queue` with it. |
 | `DUNGSCRAPER_CACHE_TTL_SECONDS` | `3600` | `DUNGSCRAPER_CACHE_ENABLED=false` turns it off. |
@@ -415,7 +469,7 @@ export DUNGSCRAPER_FLARESOLVERR_URL=http://127.0.0.1:8191/v1
 
 Inside Compose the sidecar is `http://byparr:8191/v1`. Leave the variable empty to skip it.
 
-`DUNGSCRAPER_PROXIES` is an optional comma-separated list you supply. Each site sticks to one proxy for the process. The default is a direct connection from whatever IP the process uses. DungScraper does not ship a proxy list or Tor.
+Proxies you supply rotate with health tracking, see [Proxies, batch and cache](#proxies-batch-and-cache). The default is a direct connection from whatever IP the process uses. DungScraper does not ship a proxy list or Tor.
 
 Medium articles, profiles, and tags that come back as a challenge fall back to the public RSS feed (`/feed/@author`, `/feed/publication`, `/feed/tag/name`). Other sites are checked for `<link rel="alternate" type="application/rss+xml">`.
 
@@ -440,7 +494,11 @@ Unit tests cover extraction, chunking, simhash, robots, sitemaps, SSRF checks, s
 - One worker, one Redis. A crashed worker leaves a `running` job until the 24 hour TTL.
 - Screenshots are JPEG base64 on the JSON response, not stored anywhere.
 - Token counts are a character estimate, not a model tokenizer.
-- The browser is Chromium only. Proxy rotation is a list of URLs you supply, not a paid pool.
+- The browser is Chromium only. Proxy rotation is a list of URLs you supply, not a paid pool, and DungScraper does not sell or bundle proxies.
+- `research` is retrieval, not reasoning: it ranks passages and cites them. A written answer needs your own OpenAI, Anthropic or compatible key. It is not a browsing agent that clicks and types.
+- Rate-limit and usage counters are in memory, per process. They reset on restart and are not shared between replicas.
+- The Docker files and the Render, Fly and Railway templates were written and checked for consistency, but not deployed from this repository's CI.
+- Crawl scoring is heuristic (keywords in link text and URL, depth, years in the URL, same-site). It is not a learned ranker.
 
 ## License
 

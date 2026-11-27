@@ -165,6 +165,7 @@ class ScrapeData(BaseModel):
     block_reason: str | None = None
     fetch_tier: str | None = None
     structured: dict[str, Any] | None = None
+    crawl_score: float | None = None
 
 
 class ErrorBody(BaseModel):
@@ -187,10 +188,24 @@ class CrawlRequest(BaseModel):
     limit: int = Field(25, ge=1, le=1000)
     max_depth: int = Field(2, ge=0, le=10, validation_alias=AliasChoices("max_depth", "maxDepth"))
     include_paths: list[str] = Field(
-        default_factory=list, validation_alias=AliasChoices("include_paths", "includePaths")
+        default_factory=list,
+        validation_alias=AliasChoices("include_paths", "includePaths", "include_patterns", "includePatterns"),
     )
     exclude_paths: list[str] = Field(
-        default_factory=list, validation_alias=AliasChoices("exclude_paths", "excludePaths")
+        default_factory=list,
+        validation_alias=AliasChoices("exclude_paths", "excludePaths", "exclude_patterns", "excludePatterns"),
+    )
+    strategy: Literal["bfs", "dfs", "best_first"] = "bfs"
+    keywords: list[str] = Field(default_factory=list)
+    scorers: list[Literal["keyword", "depth", "freshness", "authority"]] = Field(
+        default_factory=lambda: ["keyword", "depth", "freshness", "authority"]
+    )
+    scorer_weights: dict[str, float] = Field(
+        default_factory=dict, validation_alias=AliasChoices("scorer_weights", "scorerWeights")
+    )
+    min_score: float = Field(0.0, ge=0.0, le=1.0, validation_alias=AliasChoices("min_score", "minScore"))
+    content_types: list[str] = Field(
+        default_factory=list, validation_alias=AliasChoices("content_types", "contentTypes")
     )
     same_domain: bool = Field(True, validation_alias=AliasChoices("same_domain", "sameDomain"))
     allow_subdomains: bool = Field(
@@ -212,6 +227,13 @@ class CrawlRequest(BaseModel):
         default_factory=ScrapeOptions, validation_alias=AliasChoices("scrape_options", "scrapeOptions")
     )
 
+    @field_validator("keywords", "content_types", "scorers", mode="before")
+    @classmethod
+    def split_text(cls, value):
+        if isinstance(value, str):
+            return [part.strip() for part in value.split(",") if part.strip()]
+        return value
+
     @field_validator("url", "webhook")
     @classmethod
     def check_url(cls, value: str | None) -> str | None:
@@ -229,6 +251,8 @@ class CrawlJobData(BaseModel):
     failed: int = 0
     skipped_duplicates: int = 0
     skipped_robots: int = 0
+    skipped_content_type: int = 0
+    strategy: str = "bfs"
     pages: list[ScrapeData] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
     created_at: str
@@ -304,6 +328,28 @@ class SearchRequest(BaseModel):
     )
 
 
+class ResearchRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    question: str = Field(min_length=3, max_length=500)
+    urls: list[str] = Field(default_factory=list, max_length=20)
+    search: bool = True
+    provider: Literal["auto", "duckduckgo", "searxng", "brave", "serper"] = "auto"
+    search_limit: int = Field(6, ge=1, le=10, validation_alias=AliasChoices("search_limit", "searchLimit"))
+    max_pages: int = Field(8, ge=1, le=40, validation_alias=AliasChoices("max_pages", "maxPages"))
+    max_seconds: float = Field(60, ge=3, le=600, validation_alias=AliasChoices("max_seconds", "maxSeconds"))
+    follow_links: bool = Field(True, validation_alias=AliasChoices("follow_links", "followLinks"))
+    max_depth: int = Field(1, ge=0, le=3, validation_alias=AliasChoices("max_depth", "maxDepth"))
+    max_passages: int = Field(10, ge=1, le=40, validation_alias=AliasChoices("max_passages", "maxPassages"))
+    concurrency: int = Field(3, ge=1, le=8)
+    synthesize: bool = False
+
+    @field_validator("urls")
+    @classmethod
+    def check_urls(cls, value: list[str]) -> list[str]:
+        return [_http_url(item) for item in value]
+
+
 class SearchResultItem(BaseModel):
     url: str
     title: str | None = None
@@ -323,12 +369,16 @@ class SearchData(BaseModel):
 class BatchScrapeRequest(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    urls: list[str] = Field(min_length=1, max_length=20)
+    urls: list[str] = Field(min_length=1, max_length=200)
     scrape_options: ScrapeOptions = Field(
         default_factory=lambda: ScrapeOptions(formats=["markdown", "metadata"]),
         validation_alias=AliasChoices("scrape_options", "scrapeOptions"),
     )
-    concurrency: int = Field(4, ge=1, le=8)
+    concurrency: int = Field(4, ge=1, le=32)
+    per_host_concurrency: int = Field(
+        2, ge=1, le=16, validation_alias=AliasChoices("per_host_concurrency", "perHostConcurrency")
+    )
+    delay_ms: int = Field(0, ge=0, le=60_000, validation_alias=AliasChoices("delay_ms", "delay"))
 
     @field_validator("urls")
     @classmethod

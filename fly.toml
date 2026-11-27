@@ -1,0 +1,29 @@
+# Fly.io config. Run `fly launch --no-deploy --copy-config`, then
+# `fly secrets set DUNGSCRAPER_API_KEYS=<your key>`, then `fly deploy`. See docs/DEPLOY.md.
+app = "dungscraper-change-me"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  DUNGSCRAPER_CRAWL_MODE = "inline"
+  DUNGSCRAPER_RATE_LIMIT_PER_MINUTE = "60"
+
+[http_service]
+  internal_port = 8741
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+
+[[vm]]
+  memory = "1gb"
+  cpus = 1

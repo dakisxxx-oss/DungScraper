@@ -1,0 +1,16 @@
+# Render blueprint. In the Render dashboard: New > Blueprint > pick this repository.
+# Nothing here deploys by itself. See docs/DEPLOY.md.
+services:
+  - type: web
+    name: dungscraper
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: DUNGSCRAPER_API_KEYS
+        generateValue: true
+      - key: DUNGSCRAPER_CRAWL_MODE
+        value: inline
+      - key: DUNGSCRAPER_RATE_LIMIT_PER_MINUTE
+        value: "60"

@@ -7,9 +7,10 @@ import asyncio
 import redis.asyncio as redis_async
 
 from dungscraper.config import Settings
-from dungscraper.core.cache import MemoryCache, NullCache, RedisCache
+from dungscraper.core.cache import DiskCache, MemoryCache, NullCache, RedisCache
 from dungscraper.core.fetch import BrowserManager, make_client
 from dungscraper.core.jobs import MemoryJobStore, RedisJobStore
+from dungscraper.api.usage import UsageTracker
 from dungscraper.core.limiter import DomainRateLimiter
 from dungscraper.log import get_logger, setup_logging
 
@@ -27,6 +28,7 @@ class Services:
         self.browser = browser
         self.redis = redis
         self.limiter = DomainRateLimiter()
+        self.usage = UsageTracker.from_settings(settings)
         self.tasks: set[asyncio.Task] = set()
 
     def spawn(self, coro) -> asyncio.Task:
@@ -43,7 +45,7 @@ def current() -> Services | None:
 async def startup(settings: Settings) -> Services:
     global _current
     setup_logging(settings)
-    client = make_client(settings, proxy=settings.proxy_url or None)
+    client = make_client(settings, proxy=(settings.proxy_list or [None])[0])
     redis = None
     if settings.redis_url:
         redis = redis_async.from_url(settings.redis_url, decode_responses=True)
@@ -59,7 +61,12 @@ async def startup(settings: Settings) -> Services:
         cache = RedisCache(redis) if settings.cache_enabled else NullCache()
         jobs = RedisJobStore(redis, settings.job_ttl_seconds)
     else:
-        cache = MemoryCache(settings.cache_max_memory_items) if settings.cache_enabled else NullCache()
+        if not settings.cache_enabled:
+            cache = NullCache()
+        elif settings.cache_dir.strip():
+            cache = DiskCache(settings.cache_dir, settings.cache_max_files)
+        else:
+            cache = MemoryCache(settings.cache_max_memory_items)
         jobs = MemoryJobStore()
     services = Services(
         settings=settings,

@@ -11,7 +11,9 @@ class DungScraperError(Exception):
         *,
         status: int = 400,
         details: dict | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
+        self.headers = headers or {}
         self.code = code
         self.message = message
         self.status = status

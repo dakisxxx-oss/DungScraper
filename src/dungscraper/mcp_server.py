@@ -51,6 +51,7 @@ INSTRUCTIONS = (
     "watch_page_tool reports new ads, gone ads and price changes on listing pages, or a text diff. "
     "read_focused answers a question from a long page with only the relevant sections inside a token budget. "
     "extract_fields pulls JSON with CSS or XPath selectors, free and with no model. "
+    "research answers a question from several web pages with a cited brief and no model needed. "
     "Every result starts with a line like '🦴 DungScraper v<version> · tool · tier · ms'. "
     "When you use these tools, tell the user briefly that you are using DungScraper (for example 'Using DungScraper to read this page'). "
     "robots.txt is respected unless respect_robots is false."
@@ -127,7 +128,7 @@ def build_mcp() -> MCPServer:
         description=(
             "Scrape up to 10 URLs in one call. urls is a comma-separated or newline-separated list. "
             "Each page's markdown is clipped so the combined tool result stays usable. "
-            "Prefer this over calling scrape in a loop. Failures are per URL and do not fail the whole batch."
+            "Prefer this over calling scrape in a loop. Up to 50 URLs. concurrency caps requests in flight, per_host_concurrency caps them per site and delay_ms spaces them per site. Failures are per URL and do not fail the whole batch."
         ),
     )
     async def batch_scrape(
@@ -136,35 +137,35 @@ def build_mcp() -> MCPServer:
         render: str = "auto",
         concurrency: int = 4,
         max_chars: int = 4000,
+        per_host_concurrency: int = 2,
+        delay_ms: int = 0,
     ) -> str:
-        parsed = [part.strip() for part in urls.replace("\n", ",").split(",") if part.strip()][:10]
+        parsed = [part.strip() for part in urls.replace("\n", ",").split(",") if part.strip()][:50]
         payload = {
             "urls": parsed,
-            "concurrency": max(1, min(concurrency, 8)),
+            "concurrency": max(1, min(concurrency, 16)),
+            "per_host_concurrency": max(1, min(per_host_concurrency, 8)),
+            "delay_ms": max(0, min(delay_ms, 60_000)),
             "scrape_options": {"formats": ["markdown", "metadata"], "only_main_content": only_main_content, "render": render},
         }
 
         async def local(services):
-            from dungscraper.models import ScrapeRequest
+            from dungscraper.core.batch import batch_scrape_urls
+            from dungscraper.models import ScrapeOptions
 
-            semaphore = asyncio.Semaphore(payload["concurrency"])
-
-            async def one(url: str) -> dict:
-                async with semaphore:
-                    try:
-                        data = await scrape_url(
-                            ScrapeRequest(url=url, formats=["markdown", "metadata"], only_main_content=only_main_content, render=render),
-                            settings=services.settings,
-                            client=services.client,
-                            cache=services.cache,
-                            browser=services.browser,
-                        )
-                        return {"url": url, "data": data.model_dump(mode="json", exclude_none=True)}
-                    except DungScraperError as exc:
-                        return {"url": url, "error": f"{exc.code}: {exc.message}"}
-
-            results = await asyncio.gather(*(one(url) for url in parsed))
-            return {"results": list(results)}
+            results = await batch_scrape_urls(
+                parsed,
+                ScrapeOptions.model_validate(payload["scrape_options"]),
+                settings=services.settings,
+                client=services.client,
+                cache=services.cache,
+                browser=services.browser,
+                concurrency=payload["concurrency"],
+                per_host_concurrency=payload["per_host_concurrency"],
+                delay_ms=payload["delay_ms"],
+                limiter=services.limiter,
+            )
+            return {"results": [item.model_dump(mode="json", exclude_none=True) for item in results]}
 
         raw = await _dispatch("POST", "/v1/batch/scrape", payload, local)
         return _dump(clip_payload(json.loads(raw), max_chars=_bounded(max_chars), page_chars=_bounded(max_chars)))
@@ -173,7 +174,11 @@ def build_mcp() -> MCPServer:
         "Crawl one site and return Markdown for each page. Bounded by limit and max_depth. "
         "Uses sitemap.xml and robots.txt, skips near-duplicate pages, and spaces requests per domain. "
         "wait=true blocks until the crawl finishes (best for small limits). wait=false returns a job id; "
-        "poll it with crawl_status. include_paths and exclude_paths are comma-separated globs or re:regex."
+        "poll it with crawl_status. include_paths and exclude_paths are comma-separated globs or re:regex "
+        "(a pattern with https:// matches the full URL). strategy: bfs (default), dfs, or best_first, which always "
+        "fetches the highest-scoring link next. Scores combine keyword match in the link text and URL, depth, "
+        "freshness (years in the URL) and same-site authority; pass keywords (comma-separated) to steer best_first. "
+        "min_score drops weak links, content_types (for example text/html) filters pages."
     ))
     async def crawl(
         url: str,
@@ -183,6 +188,10 @@ def build_mcp() -> MCPServer:
         include_paths: str = "",
         exclude_paths: str = "",
         respect_robots: bool = True,
+        strategy: str = "bfs",
+        keywords: str = "",
+        min_score: float = 0.0,
+        content_types: str = "",
     ) -> str:
         payload = {
             "url": url,
@@ -192,6 +201,10 @@ def build_mcp() -> MCPServer:
             "include_paths": _csv(include_paths),
             "exclude_paths": _csv(exclude_paths),
             "respect_robots": respect_robots,
+            "strategy": strategy,
+            "keywords": _csv(keywords),
+            "min_score": min_score,
+            "content_types": _csv(content_types),
             "scrape_options": {"formats": ["markdown", "metadata"]},
         }
         raw = await _dispatch("POST", "/v1/crawl", payload, None)
@@ -457,6 +470,46 @@ def build_mcp() -> MCPServer:
             )
 
         return await _dispatch("POST", "/v1/focus", body.model_dump(mode="json", by_alias=True), local)
+
+    @mcp.tool(description=(
+        "Research a question across the web and get a cited brief, with no LLM needed. Searches (keyless DuckDuckGo by default), "
+        "reads the top pages, follows the most promising links within max_pages and max_seconds, and returns the best passages "
+        "ranked with BM25, each with its source URL, plus a short brief with numbered citations. "
+        "urls (comma-separated) adds pages to start from. synthesize=true also writes an answer when OPENAI_API_KEY, "
+        "ANTHROPIC_API_KEY or DUNGSCRAPER_LLM_API_KEY is set. Use this for questions that need several sources. "
+        "Cite the sources you use."
+    ))
+    async def research(
+        question: str,
+        max_pages: int = 8,
+        max_seconds: int = 60,
+        urls: str = "",
+        follow_links: bool = True,
+        synthesize: bool = False,
+        max_passages: int = 10,
+    ) -> str:
+        from dungscraper.core.research import research as run_research
+        from dungscraper.models import ResearchRequest
+
+        try:
+            body = ResearchRequest(
+                question=question,
+                max_pages=max_pages,
+                max_seconds=max_seconds,
+                urls=_csv(urls),
+                follow_links=follow_links,
+                synthesize=synthesize,
+                max_passages=max_passages,
+            )
+        except Exception as exc:
+            raise ToolError(str(exc)) from exc
+
+        async def local(services):
+            return await run_research(
+                body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
+            )
+
+        return await _dispatch("POST", "/v1/research", body.model_dump(mode="json"), local)
 
     @mcp.tool(description=(
         "Pull structured JSON out of a page with CSS or XPath selectors. No model, no API key, free and exact. "

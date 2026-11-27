@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from dungscraper import __version__
 from dungscraper.api.auth import require_api_key
+from dungscraper.core.batch import batch_scrape_urls
 from dungscraper.core.contacts import find_contacts
 from dungscraper.core.chunk import chunk_markdown, estimate_tokens
 from dungscraper.core.diff import markdown_diff, remember_snapshot
@@ -19,6 +20,7 @@ from dungscraper.core.jobs import cancel_crawl, job_view, resume_crawl, start_cr
 from dungscraper.core.map import map_site
 from dungscraper.core.scrape import scrape_url
 from dungscraper.core.pagetools import extract_css, focus_page
+from dungscraper.core.research import research
 from dungscraper.core.search import search_web
 from dungscraper.errors import DungScraperError
 from dungscraper.models import (
@@ -43,6 +45,7 @@ from dungscraper.models import (
     JobsResponse,
     MapRequest,
     MapResponse,
+    ResearchRequest,
     ScrapeRequest,
     ScrapeResponse,
     SearchRequest,
@@ -54,9 +57,15 @@ bearer = HTTPBearer(auto_error=False, description="API key as Bearer token. Omit
 
 async def authorized(
     request: Request,
+    response: Response,
     _credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> None:
-    await require_api_key(request)
+    key = await require_api_key(request)
+    usage = request.app.state.services.usage
+    state = usage.check(key, request.url.path)
+    request.state.key_id = state["key_id"]
+    for name, value in state["headers"].items():
+        response.headers[name] = value
 
 
 router = APIRouter(dependencies=[Depends(authorized)])
@@ -94,25 +103,19 @@ async def scrape(body: ScrapeRequest, request: Request) -> ScrapeResponse:
 )
 async def batch_scrape(body: BatchScrapeRequest, request: Request) -> BatchScrapeResponse:
     services = _services(request)
-    semaphore = asyncio.Semaphore(body.concurrency)
-
-    async def one(url: str) -> BatchItem:
-        async with semaphore:
-            try:
-                options = body.scrape_options.model_dump()
-                data = await scrape_url(
-                    ScrapeRequest(url=url, **options),
-                    settings=services.settings,
-                    client=services.client,
-                    cache=services.cache,
-                    browser=services.browser,
-                )
-                return BatchItem(url=url, data=data)
-            except DungScraperError as exc:
-                return BatchItem(url=url, error=f"{exc.code}: {exc.message}")
-
-    results = await asyncio.gather(*(one(url) for url in body.urls))
-    return BatchScrapeResponse(success=True, data=BatchScrapeData(results=list(results)))
+    results = await batch_scrape_urls(
+        body.urls,
+        body.scrape_options,
+        settings=services.settings,
+        client=services.client,
+        cache=services.cache,
+        browser=services.browser,
+        concurrency=body.concurrency,
+        per_host_concurrency=body.per_host_concurrency,
+        delay_ms=body.delay_ms,
+        limiter=services.limiter,
+    )
+    return BatchScrapeResponse(success=True, data=BatchScrapeData(results=results))
 
 
 @router.post(
@@ -357,3 +360,21 @@ async def reader(target: str, request: Request, query: str = "", max_tokens: int
         )
         text = f"# {scraped.metadata.title}\n\n{scraped.markdown}" if scraped.metadata and scraped.metadata.title and not (scraped.markdown or "").startswith("#") else (scraped.markdown or "")
     return PlainTextResponse(text, headers={"X-Powered-By": f"DungScraper/{__version__}"}, media_type="text/markdown; charset=utf-8")
+
+
+@router.post("/v1/research", tags=["research"], summary="Answer a question from the web with cited passages, no model needed")
+async def research_route(body: ResearchRequest, request: Request) -> dict:
+    """Searches, reads the top pages, follows promising links within a page and time budget, and returns ranked
+    passages with their sources and a cited brief. Add `synthesize: true` to also get a written answer when an
+    OpenAI or Anthropic key is configured."""
+    services = _services(request)
+    data = await research(
+        body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
+    )
+    return {"success": True, "data": data}
+
+
+@router.get("/v1/usage", tags=["meta"], summary="Requests made with this API key and its remaining rate limit")
+async def usage(request: Request) -> dict:
+    services = _services(request)
+    return {"success": True, "data": services.usage.report(getattr(request.state, "key_id", "anonymous"))}

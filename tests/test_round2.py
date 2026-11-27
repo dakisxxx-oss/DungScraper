@@ -184,7 +184,7 @@ def test_batch_endpoint_reports_each_url(monkeypatch):
             raise DungScraperError("fetch_failed", "nope", status=502)
         return ScrapeData(url=request.url, markdown="# Hi", render_mode="http", status_code=200)
 
-    monkeypatch.setattr("dungscraper.api.routes.scrape_url", fake_scrape)
+    monkeypatch.setattr("dungscraper.core.batch.scrape_url", fake_scrape)
     settings = Settings(api_keys="", redis_url="", log_json=False, log_level="ERROR", allow_private_networks=True)
     with TestClient(create_app(settings)) as client:
         response = client.post(

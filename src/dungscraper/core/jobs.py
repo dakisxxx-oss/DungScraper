@@ -111,6 +111,8 @@ def job_view(job: dict) -> CrawlJobData:
         failed=job.get("failed", 0),
         skipped_duplicates=job.get("skipped_duplicates", 0),
         skipped_robots=job.get("skipped_robots", 0),
+        skipped_content_type=job.get("skipped_content_type", 0),
+        strategy=(job.get("request") or {}).get("strategy", "bfs"),
         pages=job.get("pages") or [],
         errors=job.get("errors") or [],
         created_at=job["created_at"],
@@ -206,6 +208,7 @@ async def execute_crawl_job(job_id: str, services, *, resume: bool = False) -> N
     current["failed"] = result["failed"]
     current["skipped_duplicates"] = result["skipped_duplicates"]
     current["skipped_robots"] = result["skipped_robots"]
+    current["skipped_content_type"] = result.get("skipped_content_type", 0)
     current["updated_at"] = _now()
     await services.jobs.save(current)
     if current.get("webhook"):

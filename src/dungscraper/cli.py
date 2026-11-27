@@ -16,16 +16,18 @@ from dungscraper.client import DungScraper
 from dungscraper.errors import DungScraperError
 from dungscraper.local import (
     local_contacts,
+    local_batch,
     local_crawl,
     local_extract_css,
     local_focus,
     local_jobs,
     local_map,
+    local_research,
     local_scrape,
     local_search,
     local_watch,
 )
-from dungscraper.models import ContactsRequest, CrawlRequest, JobsRequest, MapRequest, SearchRequest
+from dungscraper.models import ContactsRequest, CrawlRequest, JobsRequest, MapRequest, ResearchRequest, SearchRequest
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help="DungScraper scrapes and crawls the web for agents.")
 
@@ -144,9 +146,18 @@ def serve(
     from dungscraper.config import get_settings
 
     settings = get_settings()
+    bind = host or settings.host
+    if bind not in {"127.0.0.1", "localhost", "::1"} and not settings.parsed_api_keys and not settings.allow_open_server:
+        typer.echo(
+            f"Refusing to listen on {bind} without an API key, because anyone who can reach it could use it.\n"
+            "Set DUNGSCRAPER_API_KEYS=<secret> (comma-separated for several keys), or set "
+            "DUNGSCRAPER_ALLOW_OPEN_SERVER=true if the network already protects it.",
+            err=True,
+        )
+        raise typer.Exit(2)
     uvicorn.run(
         "dungscraper.api.app:app",
-        host=host or settings.host,
+        host=bind,
         port=port or settings.port,
         reload=reload,
     )
@@ -233,17 +244,31 @@ def crawl(
     limit: int = typer.Option(10),
     max_depth: int = typer.Option(2),
     wait: bool = typer.Option(True),
+    strategy: str = typer.Option("bfs", help="bfs, dfs or best_first (follow the highest-scoring link next)."),
+    keywords: str = typer.Option("", help="Comma-separated words that steer best_first."),
+    include: str = typer.Option("", help="Comma-separated include patterns (globs, re:regex, or full URLs with https://)."),
+    exclude: str = typer.Option("", help="Comma-separated exclude patterns."),
+    min_score: float = typer.Option(0.0, help="Drop links scoring below this (0 to 1)."),
+    content_types: str = typer.Option("", help="Comma-separated content types to keep, e.g. text/html."),
     local: bool = typer.Option(False, help="Crawl in this process instead of calling the API. Always waits."),
     base_url: Optional[str] = typer.Option(None),
     api_key: Optional[str] = typer.Option(None),
 ) -> None:
     """Start a crawl. Prints the job, including pages when --wait is set."""
     try:
+        extra = {
+            "strategy": strategy,
+            "keywords": keywords,
+            "include_paths": [part.strip() for part in include.split(",") if part.strip()],
+            "exclude_paths": [part.strip() for part in exclude.split(",") if part.strip()],
+            "min_score": min_score,
+            "content_types": content_types,
+        }
         if local:
-            data = asyncio.run(local_crawl(CrawlRequest(url=url, limit=limit, max_depth=max_depth, wait=True)))
+            data = asyncio.run(local_crawl(CrawlRequest(url=url, limit=limit, max_depth=max_depth, wait=True, **extra)))
         else:
             with _client(base_url, api_key) as client:
-                data = client.crawl(url, limit=limit, max_depth=max_depth, wait=wait)
+                data = client.crawl(url, limit=limit, max_depth=max_depth, wait=wait, **extra)
         typer.echo(_dump(data))
     except DungScraperError as exc:
         _echo_error(exc)
@@ -403,11 +428,69 @@ def doctor() -> None:
         ("MCP server", "dungscraper mcp", True),
         ("Banner in tool results", "on (DUNGSCRAPER_BANNER=0 turns it off)" if banner_enabled() else "off", True),
         ("Watch snapshots", str(data_dir(settings)), True),
-        ("Proxy", settings.proxy_url or "none", True),
+        ("Proxies", _proxy_summary(settings), True),
+        ("Cache", f"disk at {settings.cache_dir}" if settings.cache_dir else "memory (set DUNGSCRAPER_CACHE_DIR for disk)", True),
+        ("API keys for serve", f"{len(settings.parsed_api_keys)} set" if settings.parsed_api_keys else "none (serve refuses to bind beyond 127.0.0.1)", True),
         ("git", shutil.which("git") or "not found (only needed to install from GitHub)", True),
     ]
     for name, value, ok in rows:
         typer.echo(f"{'OK  ' if ok else 'WARN'} {name}: {value}")
+
+
+def _proxy_summary(settings) -> str:
+    from dungscraper.core.proxies import redact
+
+    proxies = settings.proxy_list
+    if not proxies:
+        return "none (set DUNGSCRAPER_PROXIES, DUNGSCRAPER_PROXY_FILE or DUNGSCRAPER_PROXY_URL)"
+    return f"{len(proxies)} in the pool, rotating: " + ", ".join(redact(item) for item in proxies[:5]) + (" …" if len(proxies) > 5 else "")
+
+
+@app.command()
+def research(
+    question: str,
+    max_pages: int = typer.Option(8, "--max-pages", min=1, max=40),
+    max_seconds: int = typer.Option(60, "--max-seconds", min=3, max=600),
+    urls: str = typer.Option("", help="Comma-separated pages to start from, in addition to the search."),
+    follow: bool = typer.Option(True, "--follow/--no-follow", help="Follow promising links inside the pages."),
+    synthesize: bool = typer.Option(False, help="Also write an answer when OPENAI_API_KEY, ANTHROPIC_API_KEY or DUNGSCRAPER_LLM_API_KEY is set."),
+    as_json: bool = typer.Option(False, "--json", help="Print the full result instead of the brief."),
+) -> None:
+    """Answer QUESTION from the web: search, read the top pages, follow links, print a cited brief. No model needed."""
+    try:
+        request = ResearchRequest(
+            question=question,
+            max_pages=max_pages,
+            max_seconds=max_seconds,
+            urls=[part.strip() for part in urls.split(",") if part.strip()],
+            follow_links=follow,
+            synthesize=synthesize,
+        )
+        data = asyncio.run(local_research(request))
+        if as_json:
+            typer.echo(_dump(data))
+            return
+        typer.echo(data["brief"])
+        if data.get("answer"):
+            typer.echo(f"\n## Answer ({data['answer_model']})\n\n{data['answer']}")
+        stats = data["stats"]
+        typer.echo(f"\n[{stats['pages_fetched']} pages, {stats['elapsed_ms']} ms, stopped by {stats['stopped_by']}]")
+    except (DungScraperError, ValidationError) as exc:
+        _echo_error(exc if isinstance(exc, DungScraperError) else DungScraperError("invalid_request", str(exc)))
+
+
+@app.command()
+def batch(
+    urls: list[str] = typer.Argument(..., help="URLs to scrape."),
+    concurrency: int = typer.Option(4, min=1, max=32, help="Requests in flight overall."),
+    per_host: int = typer.Option(2, "--per-host", min=1, max=16, help="Requests in flight per site."),
+    delay_ms: int = typer.Option(0, "--delay-ms", min=0, max=60000, help="Minimum gap between request starts on one site."),
+) -> None:
+    """Scrape many URLs at once with per-site limits. Prints JSON."""
+    try:
+        typer.echo(_dump(asyncio.run(local_batch(urls, concurrency=concurrency, per_host_concurrency=per_host, delay_ms=delay_ms))))
+    except DungScraperError as exc:
+        _echo_error(exc)
 
 
 @app.command("extract-css")

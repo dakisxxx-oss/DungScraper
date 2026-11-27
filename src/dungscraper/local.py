@@ -165,3 +165,36 @@ async def local_focus(url: str, query: str = "", max_tokens: int = 1500, render:
         )
 
     return await with_services(work)
+
+
+async def local_research(request) -> dict:
+    from dungscraper.core.research import research
+
+    async def work(services: Services) -> dict:
+        return await research(
+            request, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
+        )
+
+    return await with_services(work)
+
+
+async def local_batch(urls: list[str], *, concurrency: int = 4, per_host_concurrency: int = 2, delay_ms: int = 0) -> dict:
+    from dungscraper.core.batch import batch_scrape_urls
+    from dungscraper.models import ScrapeOptions
+
+    async def work(services: Services) -> dict:
+        results = await batch_scrape_urls(
+            urls,
+            ScrapeOptions(formats=["markdown", "metadata"]),
+            settings=services.settings,
+            client=services.client,
+            cache=services.cache,
+            browser=services.browser,
+            concurrency=concurrency,
+            per_host_concurrency=per_host_concurrency,
+            delay_ms=delay_ms,
+            limiter=services.limiter,
+        )
+        return {"results": [item.model_dump(mode="json", exclude_none=True) for item in results]}
+
+    return await with_services(work)

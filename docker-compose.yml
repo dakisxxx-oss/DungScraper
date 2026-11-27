@@ -8,11 +8,19 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8741:8741"
+      - "${DUNGSCRAPER_BIND:-127.0.0.1}:8741:8741"
+    volumes:
+      - dungscraper-data:/data
     environment: &dungscraper_env
       DUNGSCRAPER_HOST: 0.0.0.0
       DUNGSCRAPER_REDIS_URL: redis://redis:6379/0
-      DUNGSCRAPER_API_KEYS: ${DUNGSCRAPER_API_KEYS:-dungscraper-dev-key}
+      # Required. Generate one with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+      DUNGSCRAPER_API_KEYS: ${DUNGSCRAPER_API_KEYS:?Set DUNGSCRAPER_API_KEYS in .env, see .env.example}
+      DUNGSCRAPER_RATE_LIMIT_PER_MINUTE: ${DUNGSCRAPER_RATE_LIMIT_PER_MINUTE:-0}
+      DUNGSCRAPER_RATE_LIMIT_PER_DAY: ${DUNGSCRAPER_RATE_LIMIT_PER_DAY:-0}
+      DUNGSCRAPER_KEY_LIMITS: ${DUNGSCRAPER_KEY_LIMITS:-}
+      DUNGSCRAPER_PROXIES: ${DUNGSCRAPER_PROXIES:-}
+      DUNGSCRAPER_CACHE_DIR: /data/cache
       DUNGSCRAPER_CRAWL_MODE: queue
       DUNGSCRAPER_ALLOW_PRIVATE_NETWORKS: ${DUNGSCRAPER_ALLOW_PRIVATE_NETWORKS:-false}
       DUNGSCRAPER_LLM_BASE_URL: ${DUNGSCRAPER_LLM_BASE_URL:-https://api.openai.com/v1}
@@ -44,6 +52,8 @@ services:
     restart: unless-stopped
     command: ["dungscraper", "worker"]
     environment: *dungscraper_env
+    volumes:
+      - dungscraper-data:/data
     depends_on:
       - redis
 
@@ -56,3 +66,6 @@ services:
     restart: unless-stopped
     ports:
       - "8191:8191"
+
+volumes:
+  dungscraper-data:

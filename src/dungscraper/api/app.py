@@ -93,7 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "request_id": request_id_var.get(),
             },
         }
-        return JSONResponse(status_code=exc.status, content=body)
+        return JSONResponse(status_code=exc.status, content=body, headers=exc.headers or None)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, exc: RequestValidationError):
@@ -144,6 +144,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "version": __version__,
             "redis": redis_state,
             "crawl_mode": settings.resolved_crawl_mode(),
+            "auth": bool(settings.parsed_api_keys),
+            "proxies": len(settings.proxy_list),
         }
 
     app.include_router(router)
@@ -164,7 +166,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 header = starlette_request.headers.get("authorization", "")
                 token = header.split(" ", 1)[1].strip() if header.lower().startswith("bearer ") else ""
                 token = token or starlette_request.headers.get("x-api-key", "")
-                if not token or not any(secrets.compare_digest(token, key) for key in settings.parsed_api_keys):
+                matched = next((key for key in settings.parsed_api_keys if token and secrets.compare_digest(token, key)), None)
+                if matched is not None:
+                    try:
+                        scope["app"].state.services.usage.check(matched, "/mcp")
+                    except DungScraperError as exc:
+                        response = JSONResponse(
+                            status_code=exc.status,
+                            content={"success": False, "error": {"code": exc.code, "message": exc.message}},
+                            headers=exc.headers or None,
+                        )
+                        await response(scope, receive, send)
+                        return
+                if matched is None:
                     response = JSONResponse(
                         status_code=401,
                         content={

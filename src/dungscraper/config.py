@@ -25,10 +25,16 @@ class Settings(BaseSettings):
     port: int = 8741
     api_keys: str = ""
     api_key: str = ""
+    allow_open_server: bool = False
+    rate_limit_per_minute: int = 0
+    rate_limit_per_day: int = 0
+    key_limits: str = ""
     redis_url: str = ""
     cache_enabled: bool = True
     cache_ttl_seconds: int = 3600
     cache_max_memory_items: int = 256
+    cache_dir: str = ""
+    cache_max_files: int = 5000
     respect_robots_default: bool = True
     robots_user_agent: str = "DungScraperBot/0.1"
     robots_fail_open: bool = True
@@ -45,6 +51,7 @@ class Settings(BaseSettings):
     proxy_url: str = ""
     proxy_urls: str = ""
     proxies: str = ""
+    proxy_file: str = ""
     fetch_tiers: str = ""
     flaresolverr_url: str = ""
     solve_captcha: bool = False
@@ -89,12 +96,9 @@ class Settings(BaseSettings):
 
     @property
     def proxy_list(self) -> list[str]:
-        found: list[str] = []
-        for part in (self.proxy_url, *self.proxy_urls.split(","), *self.proxies.split(",")):
-            value = part.strip()
-            if value and value not in found:
-                found.append(value)
-        return found
+        from dungscraper.core.proxies import parse_proxy_list
+
+        return parse_proxy_list(self.proxy_url, self.proxy_urls, self.proxies, file=self.proxy_file)
 
     def tier_order(self) -> list[str]:
         default = ["http", "curl", "patchright", "camoufox", "flaresolverr", "seleniumbase"]

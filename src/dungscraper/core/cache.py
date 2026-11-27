@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import time
+from pathlib import Path
 from collections import OrderedDict
 from typing import Protocol
 
@@ -41,6 +44,61 @@ class MemoryCache:
         self._items.move_to_end(key)
         while len(self._items) > self.max_items:
             self._items.popitem(last=False)
+
+
+class DiskCache:
+    """JSON files on disk with a TTL. Survives restarts; no server needed.
+
+    Entries are named by the SHA-256 of the key. Old files are pruned once the folder holds more than max_files.
+    """
+
+    def __init__(self, directory: str | Path, max_files: int = 5000) -> None:
+        self.directory = Path(directory).expanduser()
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.max_files = max_files
+        self._writes = 0
+
+    def _path(self, key: str) -> Path:
+        return self.directory / (hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json")
+
+    async def get(self, key: str) -> dict | None:
+        path = self._path(key)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if float(payload.get("expires", 0)) < time.time():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            return None
+        value = payload.get("value")
+        return value if isinstance(value, dict) else None
+
+    async def set(self, key: str, value: dict, ttl: int) -> None:
+        if ttl <= 0:
+            return
+        path = self._path(key)
+        temp = path.with_suffix(".tmp")
+        try:
+            temp.write_text(json.dumps({"expires": time.time() + ttl, "value": value}), encoding="utf-8")
+            os.replace(temp, path)
+        except OSError as exc:
+            log.warning("disk cache write failed", extra={"data": {"error": str(exc)}})
+            return
+        self._writes += 1
+        if self._writes % 50 == 0:
+            self._prune()
+
+    def _prune(self) -> None:
+        files = sorted(self.directory.glob("*.json"), key=lambda item: item.stat().st_mtime)
+        excess = len(files) - self.max_files
+        for old in files[: max(0, excess)]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
 
 
 class RedisCache:

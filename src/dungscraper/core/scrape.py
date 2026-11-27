@@ -20,7 +20,8 @@ from dungscraper.core.structured import page_structured_data
 from dungscraper.core.escalate import escalate_challenge
 from dungscraper.core.documents import docx_to_markdown, pdf_to_markdown
 from dungscraper.core.feeds import items_to_markdown, looks_like_feed, parse_feed
-from dungscraper.core.fetch import BrowserManager, RawFetch, http_fetch, make_client, sticky_proxies, sniff_kind
+from dungscraper.core.fetch import BrowserManager, RawFetch, http_fetch, make_client, sniff_kind
+from dungscraper.core.proxies import BLOCK_STATUSES, ProxyPool, pool_for, redact
 from dungscraper.core.robots import RobotsGate
 from dungscraper.core.urls import clean_request_url, safe_url
 from dungscraper.errors import DungScraperError
@@ -110,12 +111,17 @@ def _from_documents(kind: str, fetched: RawFetch, request: ScrapeRequest) -> Scr
     )
 
 
-async def _maybe_browser(request: ScrapeRequest, settings: Settings, browser: BrowserManager) -> RawFetch:
+MAX_PROXY_ATTEMPTS = 4
+
+
+async def _maybe_browser(
+    request: ScrapeRequest, settings: Settings, browser: BrowserManager, proxy: str | None = None
+) -> RawFetch:
     return await browser.fetch(
         clean_request_url(request.url),
         headers=request.headers,
         cookies=request.cookies,
-        proxy=request.proxy or settings.proxy_url or None,
+        proxy=proxy or request.proxy or settings.proxy_url or None,
         timeout_ms=request.timeout_ms,
         wait_until=request.wait_until,
         wait_for=request.wait_for,
@@ -124,6 +130,47 @@ async def _maybe_browser(request: ScrapeRequest, settings: Settings, browser: Br
         screenshot="screenshot" in request.formats,
         screenshot_full_page=request.screenshot_full_page,
     )
+
+
+async def _rotate(pool: ProxyPool, host: str, first: str | None, attempt, *, label: str) -> tuple[RawFetch, str | None, list[str]]:
+    """Run `attempt(proxy)` and, on a transport error or 403/429, try the next healthy proxy.
+
+    Returns the fetch, the proxy that produced it, and warnings describing the rotation.
+    """
+    tried: list[str] = []
+    warnings: list[str] = []
+    proxy = first
+    limit = min(len(pool.proxies), MAX_PROXY_ATTEMPTS)
+    last_error: DungScraperError | None = None
+    for turn in range(limit):
+        try:
+            fetched = await attempt(proxy)
+        except DungScraperError as exc:
+            if exc.code not in {"fetch_failed", "browser_failed"} or turn == limit - 1:
+                if proxy:
+                    pool.report_failure(proxy, host)
+                raise
+            last_error = exc
+            pool.report_failure(proxy, host)
+            warnings.append(f"proxy_error:{redact(proxy)}")
+        else:
+            blocked = fetched.status_code in BLOCK_STATUSES
+            if blocked and turn < limit - 1:
+                pool.report_failure(proxy, host)
+                warnings.append(f"proxy_blocked_{fetched.status_code}:{redact(proxy)}")
+            else:
+                if blocked:
+                    pool.report_failure(proxy, host)
+                else:
+                    pool.report_success(proxy, host)
+                if tried:
+                    warnings.append(f"proxy_rotated:{label}:{len(tried) + 1}_attempts")
+                return fetched, proxy, warnings
+        tried.append(proxy or "")
+        proxy = pool.pick(host, exclude=tried)
+        if proxy is None:
+            break
+    raise last_error or DungScraperError("fetch_failed", "Every proxy in the pool failed.", status=502)
 
 
 def _needs_browser(request: ScrapeRequest) -> bool:
@@ -176,9 +223,12 @@ async def scrape_url(
             data.timings_ms = {"total_ms": int((time.perf_counter() - started) * 1000)}
             return data
 
-    proxy = request.proxy or sticky_proxies(settings).for_domain(urlsplit(target).hostname or "")
-    own_client = client is None or bool(request.proxy)
-    if client is None or request.proxy:
+    host = urlsplit(target).hostname or ""
+    pool = pool_for(settings.proxy_list) if not request.proxy else ProxyPool([])
+    proxy = request.proxy or pool.pick(host)
+    # With a pool the shared client cannot be used, because each request may need a different proxy.
+    own_client = client is None or bool(request.proxy) or bool(pool)
+    if own_client:
         client = make_client(settings, proxy=proxy)
     respect = settings.respect_robots_default if request.respect_robots is None else request.respect_robots
     gate = robots or RobotsGate(
@@ -205,17 +255,51 @@ async def scrape_url(
             )
         fetch_started = time.perf_counter()
         browser_mgr = browser or get_browser(settings)
+        rotation: list[str] = []
         if _needs_browser(request):
-            fetched = await _maybe_browser(request, settings, browser_mgr)
+            if pool and len(pool.proxies) > 1:
+                fetched, proxy, rotation = await _rotate(
+                    pool, host, proxy, lambda chosen: _maybe_browser(request, settings, browser_mgr, chosen), label="browser"
+                )
+                fetched.warnings = [*rotation, *fetched.warnings]
+            else:
+                fetched = await _maybe_browser(request, settings, browser_mgr, proxy)
         else:
-            fetched = await http_fetch(
-                client,
-                target,
-                settings=settings,
-                headers=request.headers,
-                cookies=request.cookies,
-                timeout=(request.timeout_ms / 1000) if request.timeout_ms else None,
-            )
+            timeout = (request.timeout_ms / 1000) if request.timeout_ms else None
+
+            async def http_attempt(chosen: str | None) -> RawFetch:
+                # The first attempt reuses the client built above. Later ones need a client for the next proxy.
+                use = client if chosen == proxy else make_client(settings, proxy=chosen)
+                try:
+                    return await http_fetch(
+                        use,
+                        target,
+                        settings=settings.model_copy(update={"http_retries": 0}) if len(pool.proxies) > 1 else settings,
+                        headers=request.headers,
+                        cookies=request.cookies,
+                        timeout=timeout,
+                    )
+                finally:
+                    if use is not client:
+                        await use.aclose()
+
+            if pool and len(pool.proxies) > 1:
+                fetched, proxy, rotation = await _rotate(pool, host, proxy, http_attempt, label="http")
+                fetched.warnings = [*rotation, *fetched.warnings]
+            else:
+                fetched = await http_fetch(
+                    client,
+                    target,
+                    settings=settings,
+                    headers=request.headers,
+                    cookies=request.cookies,
+                    timeout=timeout,
+                )
+                if pool:
+                    if fetched.status_code in BLOCK_STATUSES:
+                        pool.report_failure(proxy, host)
+                    else:
+                        pool.report_success(proxy, host)
             kind = sniff_kind(fetched.content, fetched.content_type, fetched.url)
             feed_body = fetched.text or ""
             reason = None
@@ -223,7 +307,7 @@ async def scrape_url(
                 reason = should_escalate(feed_body, fetched.status_code)
             if reason == "js_shell" and request.render == "auto":
                 fetched.warnings.append("upgraded_to_browser:js_shell")
-                browser_fetch = await _maybe_browser(request, settings, browser_mgr)
+                browser_fetch = await _maybe_browser(request, settings, browser_mgr, proxy)
                 browser_fetch.warnings = [*fetched.warnings, *browser_fetch.warnings]
                 browser_fetch.tier = "playwright"
                 fetched = browser_fetch
