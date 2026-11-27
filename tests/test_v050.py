@@ -15,7 +15,7 @@ from dungscraper.core.css_extract import extract_with_schema, normalize_schema
 from dungscraper.core.focus import bm25_rank, focus_markdown, split_sections
 from dungscraper.errors import DungScraperError
 from dungscraper.models import ScrapeData, ScrapeRequest
-from tests.test_api import _serve  # noqa: F401  (reuses the tiny local HTTP server)
+from site_server import _serve  # noqa: F401  (tiny local HTTP server)
 
 SHOP = """<html><head><title>Shop</title></head><body>
 <div class="card" data-id="7"><h2> Blue  Lamp </h2><a href="/lamp">more</a><span class="price">EUR 12,50</span>

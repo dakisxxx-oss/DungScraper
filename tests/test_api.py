@@ -10,43 +10,10 @@ from dungscraper.api.app import create_app
 from dungscraper.config import Settings
 from dungscraper.core.scrape import shutdown_browser
 from dungscraper.models import ScrapeData
+from site_server import _serve  # noqa: F401
 
 
 LONG = "Documentation page for dungscraper. " + " ".join(f"detail{i}" for i in range(40))
-
-
-def _serve(pages: dict[str, tuple[str, str]]):
-    posts: list[bytes] = []
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            path = urlsplit(self.path).path
-            if path not in pages:
-                self.send_response(404)
-                self.end_headers()
-                return
-            ctype, body = pages[path]
-            data = body.encode()
-            self.send_response(200)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def do_POST(self):
-            length = int(self.headers.get("Content-Length") or 0)
-            posts.append(self.rfile.read(length))
-            self.send_response(204)
-            self.end_headers()
-
-        def log_message(self, fmt, *args):
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    host, port = server.server_address
-    return server, f"http://{host}:{port}", posts
 
 
 @pytest.fixture
