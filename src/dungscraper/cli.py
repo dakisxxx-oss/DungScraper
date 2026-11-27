@@ -17,6 +17,8 @@ from dungscraper.errors import DungScraperError
 from dungscraper.local import (
     local_contacts,
     local_crawl,
+    local_extract_css,
+    local_focus,
     local_jobs,
     local_map,
     local_scrape,
@@ -376,6 +378,68 @@ def watch(
     try:
         data = asyncio.run(local_watch(url, pages=pages, save=not no_save, reset=reset, render=render))
         typer.echo(_dump(data) if as_json else data["report"])
+    except DungScraperError as exc:
+        _echo_error(exc)
+
+
+@app.command()
+def doctor() -> None:
+    """Check the install: version, browser, MCP and where snapshots are kept."""
+    import platform
+    import shutil
+
+    from dungscraper import __version__
+    from dungscraper.banner import banner_enabled
+    from dungscraper.config import get_settings
+    from dungscraper.core.fetch import browser_available
+    from dungscraper.core.watch import data_dir
+
+    settings = get_settings()
+    browser_ok = asyncio.run(browser_available(settings))
+    rows = [
+        ("DungScraper", __version__, True),
+        ("Python", platform.python_version(), sys.version_info >= (3, 11)),
+        ("Browser (Chromium, Chrome or Edge)", "found" if browser_ok else "missing: JavaScript pages will fail. Install Chrome or Edge, or run: python -m playwright install chromium", browser_ok),
+        ("MCP server", "dungscraper mcp", True),
+        ("Banner in tool results", "on (DUNGSCRAPER_BANNER=0 turns it off)" if banner_enabled() else "off", True),
+        ("Watch snapshots", str(data_dir(settings)), True),
+        ("Proxy", settings.proxy_url or "none", True),
+        ("git", shutil.which("git") or "not found (only needed to install from GitHub)", True),
+    ]
+    for name, value, ok in rows:
+        typer.echo(f"{'OK  ' if ok else 'WARN'} {name}: {value}")
+
+
+@app.command("extract-css")
+def extract_css_cmd(
+    url: str,
+    schema: str = typer.Option(..., "--schema", help="JSON string or path to a JSON file: {\"title\": \"h1\", \"link\": \"a@href\"} or a baseSelector/fields schema."),
+    render: str = typer.Option("auto", help="auto, http or browser."),
+) -> None:
+    """Pull JSON out of a page with CSS or XPath selectors. No model, no API key."""
+    try:
+        text = Path(schema).read_text(encoding="utf-8") if Path(schema).is_file() else schema
+        parsed = json.loads(text)
+    except (OSError, ValueError) as exc:
+        _echo_error(DungScraperError("invalid_schema", f"--schema is not valid JSON or a readable file: {exc}"))
+        return
+    try:
+        typer.echo(_dump(asyncio.run(local_extract_css(url, parsed, render))))
+    except DungScraperError as exc:
+        _echo_error(exc)
+
+
+@app.command()
+def focus(
+    url: str,
+    query: str = typer.Argument("", help="What you want to know. Leave empty to just fit the page into the budget."),
+    max_tokens: int = typer.Option(1500, "--max-tokens", min=100, max=20000),
+    render: str = typer.Option("auto", help="auto, http or browser."),
+) -> None:
+    """Print only the parts of a page that answer QUERY, inside a token budget."""
+    try:
+        data = asyncio.run(local_focus(url, query, max_tokens, render))
+        typer.echo(f"<!-- {data['tokens']} of {data['total_tokens']} tokens -->\n{data['markdown']}")
     except DungScraperError as exc:
         _echo_error(exc)
 

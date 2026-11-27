@@ -94,6 +94,14 @@ class ScrapeOptions(BaseModel):
         3, ge=0, le=8, validation_alias=AliasChoices("max_comment_depth", "maxCommentDepth")
     )
 
+    @field_validator("formats", mode="before")
+    @classmethod
+    def firecrawl_format_names(cls, value):
+        aliases = {"rawHtml": "raw_html", "screenshot@fullPage": "screenshot", "summary": "markdown"}
+        if isinstance(value, list):
+            return [aliases.get(item, item) if isinstance(item, str) else item for item in value]
+        return value
+
     @field_validator("formats")
     @classmethod
     def known_formats(cls, value: list[str]) -> list[str]:
@@ -123,6 +131,9 @@ class PageMetadata(BaseModel):
     favicon: str | None = None
     keywords: list[str] = Field(default_factory=list)
     og: dict[str, str] = Field(default_factory=dict)
+    # Firecrawl-compatible names, so clients that read metadata.sourceURL keep working.
+    sourceURL: str | None = None
+    statusCode: int | None = None
 
 
 class LinkItem(BaseModel):
@@ -581,3 +592,35 @@ class JobsResponse(BaseModel):
     success: bool = True
     data: JobsData | None = None
     error: ErrorBody | None = None
+
+
+class CssExtractRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    url: str
+    schema_: dict[str, Any] = Field(alias="schema")
+    render: RenderMode = "auto"
+    wait_for: str | None = Field(None, validation_alias=AliasChoices("wait_for", "waitFor"))
+    cache: bool = True
+
+    @field_validator("url")
+    @classmethod
+    def absolute_url(cls, value: str) -> str:
+        return _http_url(value)
+
+
+class FocusRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    url: str
+    query: str = ""
+    max_tokens: int = Field(1500, ge=100, le=20_000, validation_alias=AliasChoices("max_tokens", "maxTokens"))
+    render: RenderMode = "auto"
+    only_main_content: bool = Field(
+        True, validation_alias=AliasChoices("only_main_content", "onlyMainContent")
+    )
+
+    @field_validator("url")
+    @classmethod
+    def absolute_url(cls, value: str) -> str:
+        return _http_url(value)

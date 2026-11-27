@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from dungscraper import __version__
@@ -17,6 +18,7 @@ from dungscraper.core.joblinks import find_job_links
 from dungscraper.core.jobs import cancel_crawl, job_view, resume_crawl, start_crawl
 from dungscraper.core.map import map_site
 from dungscraper.core.scrape import scrape_url
+from dungscraper.core.pagetools import extract_css, focus_page
 from dungscraper.core.search import search_web
 from dungscraper.errors import DungScraperError
 from dungscraper.models import (
@@ -29,6 +31,8 @@ from dungscraper.models import (
     ChunkResponse,
     ContactsRequest,
     ContactsResponse,
+    CssExtractRequest,
+    FocusRequest,
     DiffRequest,
     DiffResponse,
     CrawlRequest,
@@ -307,3 +311,49 @@ async def chunk(body: ChunkRequest) -> ChunkResponse:
 
 def api_version() -> str:
     return __version__
+
+
+@router.post("/v1/extract/css", tags=["extract"], summary="Extract JSON with CSS or XPath selectors, no model")
+async def extract_css_route(body: CssExtractRequest, request: Request) -> dict:
+    services = _services(request)
+    data = await extract_css(
+        body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
+    )
+    return {"success": True, "data": data}
+
+
+@router.post("/v1/focus", tags=["scrape"], summary="Only the parts of a page that answer a query, within a token budget")
+async def focus_route(body: FocusRequest, request: Request) -> dict:
+    services = _services(request)
+    data = await focus_page(
+        body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
+    )
+    return {"success": True, "data": data}
+
+
+@router.get("/r/{target:path}", tags=["scrape"], summary="Reader mode: GET /r/<url> returns Markdown", response_class=PlainTextResponse)
+async def reader(target: str, request: Request, query: str = "", max_tokens: int = 0) -> PlainTextResponse:
+    """Jina-style: `curl http://127.0.0.1:8741/r/https://example.com`. Add ?query=...&max_tokens=800 to focus."""
+    services = _services(request)
+    url = target
+    for scheme in ("https", "http"):
+        if url.startswith(f"{scheme}:/") and not url.startswith(f"{scheme}://"):
+            url = f"{scheme}://" + url[len(scheme) + 2 :]
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    forwarded = [pair for pair in request.url.query.split("&") if pair and pair.split("=")[0] not in {"query", "max_tokens"}]
+    if forwarded:
+        url += ("&" if "?" in url else "?") + "&".join(forwarded)
+    if query or max_tokens:
+        data = await focus_page(
+            FocusRequest(url=url, query=query, max_tokens=max_tokens or 1500),
+            settings=services.settings, client=services.client, cache=services.cache, browser=services.browser,
+        )
+        text = data["markdown"]
+    else:
+        scraped = await scrape_url(
+            ScrapeRequest(url=url, formats=["markdown", "metadata"]),
+            settings=services.settings, client=services.client, cache=services.cache, browser=services.browser,
+        )
+        text = f"# {scraped.metadata.title}\n\n{scraped.markdown}" if scraped.metadata and scraped.metadata.title and not (scraped.markdown or "").startswith("#") else (scraped.markdown or "")
+    return PlainTextResponse(text, headers={"X-Powered-By": f"DungScraper/{__version__}"}, media_type="text/markdown; charset=utf-8")

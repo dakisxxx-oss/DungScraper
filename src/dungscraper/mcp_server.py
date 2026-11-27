@@ -11,6 +11,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from dungscraper import __version__
+from dungscraper.banner import bannered
 from dungscraper.config import get_settings
 from dungscraper.adapters.reddit import build_reddit_target
 from dungscraper.core.chunk import chunk_markdown
@@ -48,6 +49,10 @@ INSTRUCTIONS = (
     "find_contacts_tool reads public company emails and careers links. "
     "find_jobs_tool lists job posting links. "
     "watch_page_tool reports new ads, gone ads and price changes on listing pages, or a text diff. "
+    "read_focused answers a question from a long page with only the relevant sections inside a token budget. "
+    "extract_fields pulls JSON with CSS or XPath selectors, free and with no model. "
+    "Every result starts with a line like '🦴 DungScraper v<version> · tool · tier · ms'. "
+    "When you use these tools, tell the user briefly that you are using DungScraper (for example 'Using DungScraper to read this page'). "
     "robots.txt is respected unless respect_robots is false."
 )
 
@@ -58,6 +63,22 @@ def build_mcp() -> MCPServer:
         instructions=INSTRUCTIONS,
         version=__version__,
     )
+
+    # Every tool result starts with a visible "🦴 DungScraper ..." line (DUNGSCRAPER_BANNER=0 turns it off),
+    # and every description asks the agent to tell the user that DungScraper is being used.
+    original_tool = mcp.tool
+
+    def banner_tool(*args, **kwargs):
+        if kwargs.get("description"):
+            kwargs["description"] = kwargs["description"] + " Tell the user you are using DungScraper."
+        decorate = original_tool(*args, **kwargs)
+
+        def apply(func):
+            return decorate(bannered(kwargs.get("name") or func.__name__)(func))
+
+        return apply
+
+    mcp.tool = banner_tool  # type: ignore[method-assign]
 
     @mcp.tool(description=(
         "Fetch one URL and return LLM-ready Markdown. Use this for a single page. "
@@ -417,6 +438,54 @@ def build_mcp() -> MCPServer:
         return data["report"]
 
     @mcp.tool(description=(
+        "Read only what matters. Fetches a page and returns just the sections that answer `query`, ranked with BM25, "
+        "inside max_tokens (default 1500). Use this instead of scrape when the page is long and you have a question: "
+        "it costs a fraction of the tokens. Without a query it returns the start of the page fitted to the budget."
+    ))
+    async def read_focused(url: str, query: str = "", max_tokens: int = 1500, render: str = "auto") -> str:
+        from dungscraper.core.pagetools import focus_page
+        from dungscraper.models import FocusRequest
+
+        try:
+            body = FocusRequest(url=url, query=query, max_tokens=max_tokens, render=render)
+        except Exception as exc:
+            raise ToolError(str(exc)) from exc
+
+        async def local(services):
+            return await focus_page(
+                body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
+            )
+
+        return await _dispatch("POST", "/v1/focus", body.model_dump(mode="json", by_alias=True), local)
+
+    @mcp.tool(description=(
+        "Pull structured JSON out of a page with CSS or XPath selectors. No model, no API key, free and exact. "
+        "schema_json is a JSON object. Short form: {\"title\": \"h1\", \"link\": \"a@href\"}. "
+        "For repeated items: {\"baseSelector\": \".card\", \"fields\": [{\"name\": \"title\", \"selector\": \"h2\"}, "
+        "{\"name\": \"url\", \"selector\": \"a\", \"type\": \"attribute\", \"attribute\": \"href\"}, "
+        "{\"name\": \"price\", \"selector\": \".price\", \"type\": \"regex\", \"pattern\": \"[\\\\d.,]+\"}, "
+        "{\"name\": \"tags\", \"selector\": \".tag\", \"type\": \"list\"}]}. "
+        "Types: text (default), attribute, html, regex, list, nested. Prefix a selector with xpath: for XPath. "
+        "Links and images are made absolute."
+    ))
+    async def extract_fields(url: str, schema_json: str, render: str = "auto") -> str:
+        from dungscraper.core.pagetools import extract_css
+        from dungscraper.models import CssExtractRequest
+
+        schema = _json_object_any(schema_json, "schema_json")
+        try:
+            body = CssExtractRequest(url=url, schema=schema, render=render)
+        except Exception as exc:
+            raise ToolError(str(exc)) from exc
+
+        async def local(services):
+            return await extract_css(
+                body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
+            )
+
+        return await _dispatch("POST", "/v1/extract/css", body.model_dump(mode="json", by_alias=True), local)
+
+    @mcp.tool(description=(
         "Find public business email addresses and careers links for a company site. "
         "Reads the page and, with depth=1, the contact, imprint, careers and about pages it links to. "
         "Every email says where it was found, its kind (jobs, general, sales, support, press, legal, other) "
@@ -491,6 +560,16 @@ def _json_object(value: str, name: str) -> dict:
     if not isinstance(parsed, dict):
         raise ToolError(f"{name} must be a JSON object")
     return {str(key): str(item) for key, item in parsed.items()}
+
+
+def _json_object_any(value: str, name: str) -> dict:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ToolError(f"{name} is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, dict) or not parsed:
+        raise ToolError(f"{name} must be a non-empty JSON object")
+    return parsed
 
 
 def _json_list(value: str, name: str) -> list:

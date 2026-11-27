@@ -65,7 +65,8 @@ def _apply_formats(data: ScrapeData, formats: list[str]) -> ScrapeData:
         data.raw_html = None
     if "links" not in keep:
         data.links = None
-    if "metadata" not in keep:
+    # Firecrawl always returns metadata next to the content, and clients rely on it.
+    if "metadata" not in keep and not keep & {"markdown", "html", "raw_html"}:
         data.metadata = None
     if "screenshot" not in keep:
         data.screenshot = None
@@ -300,6 +301,8 @@ async def scrape_url(
                 warnings.append(f"site_extractor:{site.kind}")
             if request.render == "http" and "screenshot" in request.formats:
                 warnings.append("screenshot_requires_browser")
+            extracted.metadata.sourceURL = fetched.url
+            extracted.metadata.statusCode = fetched.status_code
             data = ScrapeData(
                 url=fetched.url,
                 markdown=extracted.markdown,
@@ -398,7 +401,14 @@ async def _from_adapter(request: ScrapeRequest, *, settings: Settings, client: h
     adapter = adapter_for(request.url)
     if adapter is None:
         return None
-    interactive = bool(request.actions or request.wait_for or "screenshot" in request.formats or request.render == "browser")
+    # Adapters return Markdown from an API, so they cannot serve raw HTML for selector extraction.
+    interactive = bool(
+        request.actions
+        or request.wait_for
+        or "screenshot" in request.formats
+        or "raw_html" in request.formats
+        or request.render == "browser"
+    )
     if interactive and getattr(adapter, "name", "") != "reddit":
         return None
     try:

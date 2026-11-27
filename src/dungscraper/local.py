@@ -139,3 +139,29 @@ async def local_watch(url: str, *, pages: int = 1, save: bool = True, reset: boo
         )
 
     return await with_services(work)
+
+
+async def local_extract_css(url: str, schema: dict, render: str = "auto") -> dict:
+    from dungscraper.core.pagetools import extract_css
+    from dungscraper.models import CssExtractRequest
+
+    async def work(services: Services) -> dict:
+        return await extract_css(
+            CssExtractRequest(url=url, schema=schema, render=render),
+            settings=services.settings, client=services.client, cache=services.cache, browser=services.browser,
+        )
+
+    return await with_services(work)
+
+
+async def local_focus(url: str, query: str = "", max_tokens: int = 1500, render: str = "auto") -> dict:
+    from dungscraper.core.pagetools import focus_page
+    from dungscraper.models import FocusRequest
+
+    async def work(services: Services) -> dict:
+        return await focus_page(
+            FocusRequest(url=url, query=query, max_tokens=max_tokens, render=render),
+            settings=services.settings, client=services.client, cache=services.cache, browser=services.browser,
+        )
+
+    return await with_services(work)

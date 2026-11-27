@@ -481,7 +481,7 @@ def _public_headers(settings: Settings, accept: str) -> dict[str, str]:
 
 def _arctic_headers() -> dict[str, str]:
     return {
-        "User-Agent": "dungscraper/0.4.0 (+https://github.com/dakisxxx-oss/DungScraper)",
+        "User-Agent": "dungscraper/0.5.0 (+https://github.com/dakisxxx-oss/DungScraper)",
         "Accept": "application/json",
         "Accept-Encoding": "gzip, deflate",
     }
