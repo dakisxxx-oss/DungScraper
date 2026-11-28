@@ -145,6 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "redis": redis_state,
             "crawl_mode": settings.resolved_crawl_mode(),
             "auth": bool(settings.parsed_api_keys),
+            "anonymous": bool(settings.allow_anonymous),
             "proxies": len(settings.proxy_list),
         }
 
@@ -167,24 +168,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 token = header.split(" ", 1)[1].strip() if header.lower().startswith("bearer ") else ""
                 token = token or starlette_request.headers.get("x-api-key", "")
                 matched = next((key for key in settings.parsed_api_keys if token and secrets.compare_digest(token, key)), None)
-                if matched is not None:
-                    try:
-                        scope["app"].state.services.usage.check(matched, "/mcp")
-                    except DungScraperError as exc:
-                        response = JSONResponse(
-                            status_code=exc.status,
-                            content={"success": False, "error": {"code": exc.code, "message": exc.message}},
-                            headers=exc.headers or None,
-                        )
-                        await response(scope, receive, send)
-                        return
-                if matched is None:
+                if token and matched is None:
                     response = JSONResponse(
                         status_code=401,
                         content={
                             "success": False,
                             "error": {"code": "unauthorized", "message": "Missing or unknown API key."},
                         },
+                    )
+                    await response(scope, receive, send)
+                    return
+                if matched is None and not settings.allow_anonymous:
+                    response = JSONResponse(
+                        status_code=401,
+                        content={
+                            "success": False,
+                            "error": {"code": "unauthorized", "message": "Missing or unknown API key."},
+                        },
+                    )
+                    await response(scope, receive, send)
+                    return
+                peer = scope.get("client") or ("", 0)
+                ip = peer[0] if isinstance(peer, (list, tuple)) and peer else ""
+                try:
+                    scope["app"].state.services.usage.check(matched, "/mcp", client_ip=ip)
+                except DungScraperError as exc:
+                    response = JSONResponse(
+                        status_code=exc.status,
+                        content={"success": False, "error": {"code": exc.code, "message": exc.message}},
+                        headers=exc.headers or None,
                     )
                     await response(scope, receive, send)
                     return

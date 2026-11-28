@@ -5,7 +5,7 @@
 <img alt="version" src="https://img.shields.io/badge/version-0.6.0-2dd4bf">
 <img alt="license" src="https://img.shields.io/badge/license-MIT-f59e0b">
 <img alt="python" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
-<img alt="tests" src="https://img.shields.io/badge/tests-213%20passing-22c55e">
+<img alt="tests" src="https://img.shields.io/badge/tests-219%20passing-22c55e">
 <img alt="MCP" src="https://img.shields.io/badge/MCP-ready-818cf8">
 <img alt="no api key" src="https://img.shields.io/badge/API%20key-not%20needed-f472b6">
 </p>
@@ -14,15 +14,16 @@
 
 <p align="center"><img src="https://raw.githubusercontent.com/dakisxxx-oss/DungScraper/main/docs/demo.svg" alt="terminal demo" width="100%"></p>
 
-## 30-second quickstart
+## Quick start (no account)
+
+Install and scrape a page. No signup, no API key, no Playwright needed for ordinary HTML:
 
 ```bash
 pip install dungscraper
-python -m playwright install chromium     # only needed for JavaScript-heavy pages
-dungscraper doctor                        # checks your setup
+dungscraper scrape https://example.com --local
 ```
 
-For the latest code on `main`, `pip install git+https://github.com/dakisxxx-oss/DungScraper.git`.
+For JavaScript-heavy pages, later run `python -m playwright install chromium`. `dungscraper doctor` checks your setup. For the latest code on `main`, `pip install git+https://github.com/dakisxxx-oss/DungScraper.git`.
 
 Add it to Claude Desktop, Cursor or any MCP client:
 
@@ -34,43 +35,17 @@ For Claude Desktop, `dungscraper install-claude` writes that entry for you. Then
 
 > **Your agent will say it is using DungScraper.** Every tool result starts with `🦴 DungScraper v0.6.0 · <tool> · <tier> · <ms>`, and the tool descriptions tell the agent to mention it. Set `DUNGSCRAPER_BANNER=0` to turn the line off.
 
+## Try the free public API (no signup)
 
-## Self-host in 5 minutes
-
-**Free on Oracle Cloud Always Free (Ampere arm64).** The same steps work on any amd64 or arm64 Docker host.
-
-1. Create an Always Free Ampere VM (`VM.Standard.A1.Flex`, Canonical Ubuntu 24.04). 4 OCPU and 24 GB still fit the free tier. Add your SSH public key when you create the instance.
-
-2. Install Docker Engine and the Compose plugin from Docker's official repo, then enable Docker on boot.
-
-3. Clone this repo and create a `.env` with an API key. The public API will not start on `0.0.0.0` without one. Local MCP, CLI and `pip install` still need no key.
+A demo instance is running at `http://92.5.134.188:8741`. No account and no key. Per-IP limits apply (10 requests/minute, 200/day, crawls cap at 5 pages). Private and internal addresses are blocked. It is HTTP only for now (a domain and TLS can come later). This is a single Always Free VM, not a paid SLA.
 
 ```bash
-git clone https://github.com/dakisxxx-oss/DungScraper.git
-cd DungScraper
-cp .env.example .env
-# Set DUNGSCRAPER_API_KEYS to a value from:
-#   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-# To accept traffic from other machines (put TLS in front when you can):
-#   DUNGSCRAPER_BIND=0.0.0.0
-chmod 600 .env
+curl -s "http://92.5.134.188:8741/r/https://example.com"
 ```
 
-4. Build and run. Compose starts the API, a Redis-backed crawl queue and a worker, all with `restart: unless-stopped`.
+Or `POST /v1/scrape` with `{"url":"https://example.com"}` and no Authorization header. If you have a key from a self-hosted `.env`, send it as `Authorization: Bearer <key>` to skip the anonymous caps.
 
-```bash
-docker compose up --build -d
-curl -s localhost:8741/health
-```
 
-5. Open TCP port **8741**:
-
-- On Ubuntu images from Oracle, the default firewall has iptables `REJECT` rules in `/etc/iptables/rules.v4`. Add an `ACCEPT` for TCP 8741 **before** the `REJECT` line and keep that file in sync with the live rules.
-- In the Oracle Cloud console, add an ingress rule on your VCN's default security list: source `0.0.0.0/0`, protocol TCP, destination port 8741.
-
-Call the API with `Authorization: Bearer <key>` or `X-API-Key: <key>`. Compose binds to `127.0.0.1` unless you set `DUNGSCRAPER_BIND=0.0.0.0`. If you put Caddy or nginx in front, keep the bind on localhost and open 80/443 instead.
-
-The Dockerfile installs `libatomic1` so Playwright starts on arm64 (Oracle Ampere, Raspberry Pi, Apple Silicon). Full reference: [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md).
 
 ## What you get
 
@@ -82,7 +57,7 @@ The Dockerfile installs `libatomic1` so Playwright starts on arm64 (Oracle Amper
 | **Research with citations** | `research` searches, reads the top pages, follows promising links within a page and time budget, and returns ranked passages with source URLs and a cited brief. No LLM needed. Add your own OpenAI or Anthropic key for a written answer. |
 | **Deep crawl strategies** | `bfs`, `dfs` or `best_first` crawling. Links are scored by keywords in the text and URL, depth, freshness and same-site authority. Include/exclude patterns, content-type filter, `min_score`. |
 | **Proxies and scale** | Bring your own proxies (HTTP or SOCKS) with per-site stickiness, health tracking, backoff, and retry on 403/429 with the next proxy, on both the HTTP and browser paths. Batch scrape up to 200 URLs with global and per-host limits and spacing. Optional disk cache. |
-| **Self-host ready** | Dockerfile with health check, compose file, API keys, per-key rate limits, `/v1/usage`, and Render, Fly and Railway templates. See [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md). |
+| **Self-host ready** | One-command installer, Dockerfile with health check, compose file, optional anonymous public access with per-IP limits, API keys, `/v1/usage`, and Render, Fly and Railway templates. See [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md). |
 | **Crawl, map, search** | Crawl a site, list its URLs, search the web. |
 | **Change watching** | `watch_page_tool` reports new, removed and price-changed ads, or a diff of any page. |
 | **Site readers** | Reddit with no API key, RSS/Atom, skelbiu.lt and autoplius.lt listings, schema.org and OpenGraph on any page. |
@@ -108,14 +83,14 @@ Based on each project's public docs, November 2026. Pricing changes, so check th
 | Proxy rotation and scale | **Yes (bring your own proxies)** | Yes, managed | Yes (bring your own) | Yes (proxy management) | Hosted |
 | Autonomous research agent | **Yes (retrieval with citations, no LLM; optional LLM answer)** | Yes (LLM agent, credits) | Partial (adaptive crawling) | No | No |
 | Deep-crawl scoring strategies | **Yes (bfs, dfs, best-first, 4 scorers)** | Path filters and depth | Yes (more scorers and filters) | No | No |
-| Hosted option | **Yes (self-host, Docker)** | Yes | Cloud and Docker | Yes | Yes |
+| Hosted option | **Yes (free public demo, or self-host with Docker)** | Yes | Cloud and Docker | Yes | Yes |
 
 "No" means not found in the project's public docs.
 
 Where it loses, plainly:
 - **Proxies are yours.** DungScraper rotates and health-checks proxies you supply. It sells and bundles none, and has no residential pool. Heavy bot protection (Cloudflare Turnstile, DataDome) can still block it.
 - **Research is retrieval, not reasoning.** It ranks and cites passages. It does not click, log in or plan like Firecrawl's agent. A written answer needs your own model key.
-- **"Hosted" means self-hosted.** The Docker image, compose file and one-click templates are ready, but there is no service run by us. The image has been built and run on Oracle Cloud Always Free Ampere (arm64). Platform one-click deploys and a Docker build in CI have not been run from this repo, so check your first deploy on Render, Fly or Railway.
+- **The public demo is a single Always Free VM.** It is free, has no signup, and is rate-limited per IP. It has no SLA, no TLS yet (plain HTTP on a public IP), and may change address. For production, run your own instance; see [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md). Platform one-click deploys and a Docker build in CI have not been run from this repo.
 - **Scale is one machine** (or a few replicas whose rate-limit counters are separate). Crawl4AI's deep-crawl scorers and filters are more numerous than ours.
 - It is a young project with fewer users and less mileage than the others.
 
@@ -150,7 +125,7 @@ The full reference is in [docs/REFERENCE.md](https://github.com/dakisxxx-oss/Dun
 DungScraper is free and stays free to run on your own machine.
 
 - **Star the repo.** It helps other people find it.
-- **Run your own hosted instance today.** See [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md).
+- **Run your own instance.** One command on Ubuntu or Debian; details in [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md).
 - **Want a managed service run for you?** [Open an issue titled "Hosted waitlist"](https://github.com/dakisxxx-oss/DungScraper/issues/new?title=Hosted%20waitlist) to get in line. It is only built if enough people ask.
 - **Need it for your business?** Open an issue for custom site readers, integration help or support.
 

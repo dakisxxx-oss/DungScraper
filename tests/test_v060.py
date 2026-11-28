@@ -966,3 +966,113 @@ def test_deploy_files_are_consistent():
     assert "internal_port = 8741" in fly and 'path = "/health"' in fly
     assert (root / ".env.example").read_text().count("DUNGSCRAPER_API_KEYS") >= 1
     assert not (root / ".github" / "FUNDING.yml").exists()  # sponsors are not active yet
+
+
+def test_anonymous_public_api_allows_missing_key_but_rejects_a_bad_key(monkeypatch):
+    from dungscraper.models import ScrapeData
+
+    async def fake_scrape(request, **kwargs):
+        return ScrapeData(url=request.url, markdown="# Hi", render_mode="http", status_code=200)
+
+    monkeypatch.setattr("dungscraper.api.routes.scrape_url", fake_scrape)
+    s = settings(api_keys="owner-key", allow_anonymous=True, allow_private_networks=True)
+    with TestClient(create_app(s)) as client:
+        health = client.get("/health")
+        assert health.status_code == 200 and health.json()["anonymous"] is True
+        open_req = client.post("/v1/scrape", json={"url": "https://example.com"})
+        assert open_req.status_code == 200 and open_req.json()["data"]["markdown"] == "# Hi"
+        assert "X-RateLimit-Limit" in open_req.headers
+        bad = client.post(
+            "/v1/scrape",
+            headers={"Authorization": "Bearer nope"},
+            json={"url": "https://example.com"},
+        )
+        assert bad.status_code == 401 and bad.json()["error"]["code"] == "unauthorized"
+        good = client.post(
+            "/v1/scrape",
+            headers={"Authorization": "Bearer owner-key"},
+            json={"url": "https://example.com"},
+        )
+        assert good.status_code == 200
+
+
+def test_anonymous_requests_are_limited_per_ip_keys_stay_unlimited():
+    from dungscraper.api.usage import UsageTracker, anon_id
+
+    clock = Clock()
+    tracker = UsageTracker(per_minute=0, per_day=0, anon_per_minute=2, anon_per_day=10, clock=clock)
+    tracker.check(None, "/v1/scrape", client_ip="1.1.1.1")
+    tracker.check(None, "/v1/scrape", client_ip="1.1.1.1")
+    with pytest.raises(DungScraperError) as caught:
+        tracker.check(None, "/v1/scrape", client_ip="1.1.1.1")
+    assert caught.value.status == 429 and caught.value.code == "rate_limited"
+    # a different IP has its own bucket
+    assert tracker.check(None, "/v1/scrape", client_ip="8.8.8.8")["key_id"] == anon_id("8.8.8.8")
+    # a valid key is not bound by the anonymous cap
+    for _ in range(5):
+        assert tracker.check("owner-key", "/v1/scrape", client_ip="1.1.1.1")["headers"] == {}
+    assert anon_id("1.1.1.1") != anon_id("8.8.8.8")
+    assert "1.1.1.1" not in tracker.report(anon_id("1.1.1.1"))["key_id"]
+
+
+def test_anonymous_api_rate_limit_and_crawl_cap(monkeypatch):
+    from dungscraper.core.jobs import job_view, new_job
+    from dungscraper.models import CrawlRequest, ScrapeData
+
+    async def fake_scrape(request, **kwargs):
+        return ScrapeData(url=request.url, markdown="# Hi", render_mode="http", status_code=200)
+
+    captured = {}
+
+    async def fake_start(request, services):
+        captured["limit"] = request.limit
+        captured["timeout"] = request.timeout_seconds
+        return job_view(new_job(request))
+
+    monkeypatch.setattr("dungscraper.api.routes.scrape_url", fake_scrape)
+    monkeypatch.setattr("dungscraper.api.routes.start_crawl", fake_start)
+    s = settings(
+        api_keys="owner-key",
+        allow_anonymous=True,
+        allow_private_networks=True,
+        anon_rate_limit_per_minute=2,
+        anon_max_pages=3,
+        anon_timeout_seconds=15,
+    )
+    with TestClient(create_app(s)) as client:
+        assert client.post("/v1/scrape", json={"url": "https://example.com"}).status_code == 200
+        assert client.post("/v1/scrape", json={"url": "https://example.com"}).status_code == 200
+        blocked = client.post("/v1/scrape", json={"url": "https://example.com"})
+        assert blocked.status_code == 429 and blocked.json()["error"]["code"] == "rate_limited"
+        # keyed requests keep going
+        allowed = client.post(
+            "/v1/scrape",
+            headers={"Authorization": "Bearer owner-key"},
+            json={"url": "https://example.com"},
+        )
+        assert allowed.status_code == 200
+        crawled = client.post(
+            "/v1/crawl",
+            json={"url": "https://example.com", "limit": 50, "timeout_seconds": 120},
+            headers={"Authorization": "Bearer owner-key"},
+        )
+        assert crawled.status_code == 200
+        # use a fresh app so the anon minute bucket does not block the cap check
+    with TestClient(create_app(s)) as client:
+        crawled = client.post(
+            "/v1/crawl",
+            json={"url": "https://example.com", "limit": 50, "timeout_seconds": 120},
+        )
+        assert crawled.status_code == 200
+        assert captured["limit"] == 3 and captured["timeout"] == 15
+
+
+def test_anonymous_still_blocks_private_urls():
+    s = settings(api_keys="owner-key", allow_anonymous=True, allow_private_networks=False)
+    with TestClient(create_app(s)) as client:
+        denied = client.post("/v1/scrape", json={"url": "http://127.0.0.1/"})
+        assert denied.status_code in {400, 403, 422}
+        body = denied.json()
+        message = str(body).lower()
+        assert denied.status_code != 401
+        assert "127.0.0.1" in message or "private" in message or "forbidden" in message or body.get("error")

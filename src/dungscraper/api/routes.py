@@ -9,7 +9,7 @@ from fastapi.responses import PlainTextResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from dungscraper import __version__
-from dungscraper.api.auth import require_api_key
+from dungscraper.api.auth import client_ip, require_api_key
 from dungscraper.core.batch import batch_scrape_urls
 from dungscraper.core.contacts import find_contacts
 from dungscraper.core.chunk import chunk_markdown, estimate_tokens
@@ -61,11 +61,32 @@ async def authorized(
     _credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> None:
     key = await require_api_key(request)
+    settings = request.app.state.services.settings
+    request.state.anonymous = bool(settings.allow_anonymous and key is None)
     usage = request.app.state.services.usage
-    state = usage.check(key, request.url.path)
+    state = usage.check(key, request.url.path, client_ip=client_ip(request))
     request.state.key_id = state["key_id"]
     for name, value in state["headers"].items():
         response.headers[name] = value
+
+
+def _cap_anon_request(request: Request, body):
+    """Clamp crawl/batch size and timeouts for anonymous public use."""
+    if not getattr(request.state, "anonymous", False):
+        return body
+    settings = request.app.state.services.settings
+    updates: dict = {}
+    max_pages = settings.anon_max_pages
+    max_timeout = settings.anon_timeout_seconds
+    if hasattr(body, "limit") and body.limit > max_pages:
+        updates["limit"] = max_pages
+    if hasattr(body, "max_pages") and body.max_pages > max_pages:
+        updates["max_pages"] = max_pages
+    if hasattr(body, "timeout_seconds") and body.timeout_seconds > max_timeout:
+        updates["timeout_seconds"] = max_timeout
+    if hasattr(body, "urls") and isinstance(getattr(body, "urls", None), list) and len(body.urls) > max_pages:
+        updates["urls"] = list(body.urls)[:max_pages]
+    return body.model_copy(update=updates) if updates else body
 
 
 router = APIRouter(dependencies=[Depends(authorized)])
@@ -83,6 +104,7 @@ def _services(request: Request):
     summary="Scrape one URL into Markdown",
 )
 async def scrape(body: ScrapeRequest, request: Request) -> ScrapeResponse:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await scrape_url(
         body,
@@ -102,6 +124,7 @@ async def scrape(body: ScrapeRequest, request: Request) -> ScrapeResponse:
     summary="Scrape many URLs",
 )
 async def batch_scrape(body: BatchScrapeRequest, request: Request) -> BatchScrapeResponse:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     results = await batch_scrape_urls(
         body.urls,
@@ -126,6 +149,7 @@ async def batch_scrape(body: BatchScrapeRequest, request: Request) -> BatchScrap
     summary="Start a site crawl",
 )
 async def crawl(body: CrawlRequest, request: Request) -> CrawlResponse:
+    body = _cap_anon_request(request, body)
     job = await start_crawl(body, _services(request))
     return CrawlResponse(success=True, data=job)
 
@@ -176,6 +200,7 @@ async def crawl_resume(job_id: str, request: Request) -> CrawlResponse:
     summary="Diff markdown against a baseline or the last snapshot",
 )
 async def diff_page(body: DiffRequest, request: Request) -> DiffResponse:
+    body = _cap_anon_request(request, body)
     current = body.current
     baseline = body.baseline
     if body.url and current is None:
@@ -205,6 +230,7 @@ async def diff_page(body: DiffRequest, request: Request) -> DiffResponse:
     summary="Discover URLs on a site",
 )
 async def map_urls(body: MapRequest, request: Request) -> MapResponse:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await map_site(
         body,
@@ -223,6 +249,7 @@ async def map_urls(body: MapRequest, request: Request) -> MapResponse:
     summary="Search the web and optionally scrape the hits",
 )
 async def search(body: SearchRequest, request: Request) -> SearchResponse:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await search_web(
         body,
@@ -242,6 +269,7 @@ async def search(body: SearchRequest, request: Request) -> SearchResponse:
     summary="Find public business emails and careers links on a page or small site",
 )
 async def contacts(body: ContactsRequest, request: Request) -> ContactsResponse:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await find_contacts(
         body,
@@ -262,6 +290,7 @@ async def contacts(body: ContactsRequest, request: Request) -> ContactsResponse:
     summary="List links to job postings on a careers page",
 )
 async def jobs(body: JobsRequest, request: Request) -> JobsResponse:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await find_job_links(
         body,
@@ -281,6 +310,7 @@ async def jobs(body: JobsRequest, request: Request) -> JobsResponse:
     summary="Extract JSON with a schema or a prompt",
 )
 async def extract(body: ExtractRequest, request: Request) -> ExtractResponse:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await extract_structured(
         body,
@@ -299,7 +329,8 @@ async def extract(body: ExtractRequest, request: Request) -> ExtractResponse:
     tags=["chunk"],
     summary="Split Markdown into token-aware RAG chunks",
 )
-async def chunk(body: ChunkRequest) -> ChunkResponse:
+async def chunk(body: ChunkRequest, request: Request) -> ChunkResponse:
+    body = _cap_anon_request(request, body)
     chunks = chunk_markdown(
         body.text,
         max_tokens=body.max_tokens,
@@ -318,6 +349,7 @@ def api_version() -> str:
 
 @router.post("/v1/extract/css", tags=["extract"], summary="Extract JSON with CSS or XPath selectors, no model")
 async def extract_css_route(body: CssExtractRequest, request: Request) -> dict:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await extract_css(
         body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
@@ -327,6 +359,7 @@ async def extract_css_route(body: CssExtractRequest, request: Request) -> dict:
 
 @router.post("/v1/focus", tags=["scrape"], summary="Only the parts of a page that answer a query, within a token budget")
 async def focus_route(body: FocusRequest, request: Request) -> dict:
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await focus_page(
         body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser
@@ -367,6 +400,7 @@ async def research_route(body: ResearchRequest, request: Request) -> dict:
     """Searches, reads the top pages, follows promising links within a page and time budget, and returns ranked
     passages with their sources and a cited brief. Add `synthesize: true` to also get a written answer when an
     OpenAI or Anthropic key is configured."""
+    body = _cap_anon_request(request, body)
     services = _services(request)
     data = await research(
         body, settings=services.settings, client=services.client, cache=services.cache, browser=services.browser

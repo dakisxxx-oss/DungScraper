@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     api_keys: str = ""
     api_key: str = ""
     allow_open_server: bool = False
+    # When True, requests without a key are allowed (per-IP anon limits apply).
+    # A valid key still bypasses the anonymous caps.
+    allow_anonymous: bool = False
+    anon_rate_limit_per_minute: int = 10
+    anon_rate_limit_per_day: int = 200
+    anon_max_pages: int = 5
+    anon_timeout_seconds: float = 30
     rate_limit_per_minute: int = 0
     rate_limit_per_day: int = 0
     key_limits: str = ""

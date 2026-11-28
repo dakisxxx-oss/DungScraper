@@ -2,6 +2,33 @@
 
 DungScraper is a normal web service. Run it on your own machine, a VPS, or a container platform. Nothing here deploys anything by itself, and no account is created for you.
 
+If you only want to try it, you do not need to self-host: `pip install dungscraper` works with no account, and a rate-limited public demo is documented in the README.
+
+## One-command install (Ubuntu or Debian)
+
+On a fresh amd64 or arm64 server, including Oracle Cloud Always Free Ampere:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dakisxxx-oss/DungScraper/main/scripts/install.sh | sudo bash
+```
+
+The script installs Docker if it is missing, clones or updates `/opt/dungscraper`, creates a `.env` with a random API key (existing keys are never rotated), opens TCP 8741 on the host firewall, starts the API, Redis and worker, and prints the URL and key. It is safe to run again.
+
+The first run builds the Docker image on the machine (several minutes; there is no published multi-arch image yet). Later runs reuse the image and come up quickly.
+
+On Oracle Cloud, also add an ingress rule in the VCN's default security list for TCP port 8741. Ubuntu images from Oracle have iptables `REJECT` rules in `/etc/iptables/rules.v4`; the installer inserts an `ACCEPT` for 8741 before that line and keeps it persisted. A domain and TLS can be put in front later.
+
+To serve anonymously (no key, per-IP limits) while keeping your private key for unlimited use, add this to `/opt/dungscraper/.env` and recreate the containers:
+
+```
+DUNGSCRAPER_ALLOW_ANONYMOUS=true
+DUNGSCRAPER_ANON_RATE_LIMIT_PER_MINUTE=10
+DUNGSCRAPER_ANON_RATE_LIMIT_PER_DAY=200
+DUNGSCRAPER_ANON_MAX_PAGES=5
+DUNGSCRAPER_ANON_TIMEOUT_SECONDS=30
+```
+
+
 **What you get:** the REST API (`/v1/...`), the playground at `/`, MCP over HTTP at `/mcp`, API-key auth, optional per-key rate limits and a usage endpoint, a `/health` endpoint, a Docker image with a health check, and a compose file with Redis and a crawl worker.
 
 **What you do not get:** managed proxies, a billing system, multi-tenant accounts, or counters shared between replicas. Keys are a list you control. Limits and usage counters are in memory per process.
