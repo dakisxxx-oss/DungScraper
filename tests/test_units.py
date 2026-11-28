@@ -281,3 +281,40 @@ def test_extract_repairs_invalid_json(monkeypatch, settings):
     )
     assert data.results[0].data == {"name": "Ada"}
     assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_redis_dequeue_returns_job_id():
+    from unittest.mock import AsyncMock
+
+    from dungscraper.core.jobs import RedisJobStore
+
+    redis = AsyncMock()
+    redis.brpop.return_value = ("dungscraper:jobs", "abc123")
+    store = RedisJobStore(redis, ttl=60)
+    assert await store.dequeue(5) == "abc123"
+    redis.brpop.assert_awaited_once_with("dungscraper:jobs", timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_redis_dequeue_empty_brpop_returns_none():
+    from unittest.mock import AsyncMock
+
+    from dungscraper.core.jobs import RedisJobStore
+
+    redis = AsyncMock()
+    redis.brpop.return_value = None
+    store = RedisJobStore(redis, ttl=60)
+    assert await store.dequeue(5) is None
+
+
+@pytest.mark.asyncio
+async def test_redis_dequeue_socket_timeout_returns_none():
+    from unittest.mock import AsyncMock
+
+    from dungscraper.core.jobs import RedisJobStore
+
+    redis = AsyncMock()
+    redis.brpop.side_effect = TimeoutError("Timeout reading from redis:6379")
+    store = RedisJobStore(redis, ttl=60)
+    assert await store.dequeue(5) is None

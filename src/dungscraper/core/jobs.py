@@ -73,7 +73,11 @@ class RedisJobStore:
         await self.redis.lpush(self.queue, job_id)
 
     async def dequeue(self, timeout: int = 5) -> str | None:
-        item = await self.redis.brpop(self.queue, timeout=timeout)
+        try:
+            item = await self.redis.brpop(self.queue, timeout=timeout)
+        except TimeoutError:
+            # Empty queue: redis-py 8 raises when socket_timeout <= BRPOP timeout.
+            return None
         if not item:
             return None
         return item[1]

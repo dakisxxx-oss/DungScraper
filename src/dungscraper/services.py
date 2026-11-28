@@ -48,7 +48,13 @@ async def startup(settings: Settings) -> Services:
     client = make_client(settings, proxy=(settings.proxy_list or [None])[0])
     redis = None
     if settings.redis_url:
-        redis = redis_async.from_url(settings.redis_url, decode_responses=True)
+        # redis-py 8 defaults socket_timeout to 5s. That aborts BRPOP(timeout=5)
+        # on an idle queue. The worker needs no client-side read deadline.
+        redis = redis_async.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_timeout=None,
+        )
         try:
             await redis.ping()
         except Exception as exc:
