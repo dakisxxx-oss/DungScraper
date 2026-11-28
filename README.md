@@ -90,7 +90,7 @@ Based on each project's public docs, November 2026. Pricing changes, so check th
 Where it loses, plainly:
 - **Proxies are yours.** DungScraper rotates and health-checks proxies you supply. It sells and bundles none, and has no residential pool. Heavy bot protection (Cloudflare Turnstile, DataDome) can still block it.
 - **Research is retrieval, not reasoning.** It ranks and cites passages. It does not click, log in or plan like Firecrawl's agent. A written answer needs your own model key.
-- **The public demo is a single Always Free VM.** It is free, has no signup, and is rate-limited per IP. It has no SLA, no TLS yet (plain HTTP on a public IP), and may change address. For production, run your own instance; see [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md). Platform one-click deploys and a Docker build in CI have not been run from this repo.
+- **The public demo is a single Always Free VM.** It is free, has no signup, and is rate-limited per IP. It has no SLA, no TLS yet (plain HTTP on a public IP), and may change address. For production, run your own instance; see [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md). Self-host pulls `ghcr.io/dakisxxx-oss/dungscraper` (amd64 and arm64). Render, Fly and Railway one-click deploys have not been run from this repo.
 - **Scale is one machine** (or a few replicas whose rate-limit counters are separate). Crawl4AI's deep-crawl scorers and filters are more numerous than ours.
 - It is a young project with fewer users and less mileage than the others.
 

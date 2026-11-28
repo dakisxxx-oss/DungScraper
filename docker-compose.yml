@@ -4,11 +4,11 @@ services:
     restart: unless-stopped
 
   dungscraper:
-    image: dungscraper
+    image: ${DUNGSCRAPER_IMAGE:-ghcr.io/dakisxxx-oss/dungscraper:latest}
     build: .
     restart: unless-stopped
     ports:
-      - "${DUNGSCRAPER_BIND:-127.0.0.1}:8741:8741"
+      - "${DUNGSCRAPER_BIND:-127.0.0.1}:${DUNGSCRAPER_PORT:-8741}:8741"
     volumes:
       - dungscraper-data:/data
     environment: &dungscraper_env
@@ -52,7 +52,7 @@ services:
       start_period: 25s
 
   dungscraper-worker:
-    image: dungscraper
+    image: ${DUNGSCRAPER_IMAGE:-ghcr.io/dakisxxx-oss/dungscraper:latest}
     build: .
     restart: unless-stopped
     command: ["dungscraper", "worker"]

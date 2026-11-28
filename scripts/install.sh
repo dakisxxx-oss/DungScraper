@@ -74,11 +74,13 @@ if command -v iptables >/dev/null 2>&1; then
   fi
 fi
 
-if docker image inspect dungscraper:latest >/dev/null 2>&1; then
-  step "Starting DungScraper (existing image)"
+IMAGE="${DUNGSCRAPER_IMAGE:-ghcr.io/dakisxxx-oss/dungscraper:latest}"
+export DUNGSCRAPER_IMAGE="${IMAGE}"
+if docker pull "${IMAGE}"; then
+  step "Starting DungScraper from ${IMAGE}"
   docker compose up -d
 else
-  step "Building and starting DungScraper (first run compiles the image)"
+  step "Could not pull ${IMAGE}; building the image locally"
   docker compose up --build -d
 fi
 

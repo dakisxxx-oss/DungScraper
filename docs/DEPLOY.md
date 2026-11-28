@@ -14,7 +14,7 @@ curl -fsSL https://raw.githubusercontent.com/dakisxxx-oss/DungScraper/main/scrip
 
 The script installs Docker if it is missing, clones or updates `/opt/dungscraper`, creates a `.env` with a random API key (existing keys are never rotated), opens TCP 8741 on the host firewall, starts the API, Redis and worker, and prints the URL and key. It is safe to run again.
 
-The first run builds the Docker image on the machine (several minutes; there is no published multi-arch image yet). Later runs reuse the image and come up quickly.
+The installer pulls the published multi-arch image `ghcr.io/dakisxxx-oss/dungscraper:latest` (linux/amd64 and linux/arm64, built on each push to `main` and on `v*` tags). If the pull fails, it builds the image locally, which takes several minutes.
 
 On Oracle Cloud, also add an ingress rule in the VCN's default security list for TCP port 8741. Ubuntu images from Oracle have iptables `REJECT` rules in `/etc/iptables/rules.v4`; the installer inserts an `ACCEPT` for 8741 before that line and keeps it persisted. A domain and TLS can be put in front later.
 
@@ -56,7 +56,8 @@ curl -H "Authorization: Bearer <your key>" localhost:8741/v1/usage
 
 ```bash
 cp .env.example .env      # set DUNGSCRAPER_API_KEYS
-docker compose up --build -d
+docker compose pull && docker compose up -d
+# If the pull fails: docker compose up --build -d
 ```
 
 Compose refuses to start without a key. It binds to 127.0.0.1 by default. To serve other machines set `DUNGSCRAPER_BIND=0.0.0.0` and put a TLS proxy (Caddy, nginx, Traefik, your cloud load balancer) in front.
@@ -101,4 +102,4 @@ Over a limit the API answers `429` with `Retry-After` and `X-RateLimit-Limit` / 
 
 ## What has and has not been verified
 
-Verified by the test suite and live runs: key auth (401 without a key, 200 with), per-key limits and `429` headers, `/v1/usage`, the refusal to listen publicly without a key, and that the compose file, Dockerfile, `render.yaml`, `fly.toml` and `railway.json` are consistent with each other. An actual `docker compose` build and run has been verified on Oracle Cloud Always Free Ampere (arm64, Ubuntu 24.04), including Playwright after installing `libatomic1`. Not run from this repository: a Docker build in CI, or a Render, Fly or Railway deployment. Check the first deploy on your platform before relying on it.
+Verified by the test suite and live runs: key auth (401 without a key, 200 with), per-key limits and `429` headers, `/v1/usage`, the refusal to listen publicly without a key, and that the compose file, Dockerfile, `render.yaml`, `fly.toml` and `railway.json` are consistent with each other. An actual `docker compose` build and run has been verified on Oracle Cloud Always Free Ampere (arm64, Ubuntu 24.04), including Playwright after installing `libatomic1`. Pushes to `main` and `v*` tags publish `ghcr.io/dakisxxx-oss/dungscraper` for linux/amd64 and linux/arm64. Render, Fly and Railway deployments have not been run from this repository; check the first deploy on your platform before relying on it.
