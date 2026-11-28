@@ -27,8 +27,10 @@ jobs:
         include:
           - runner: ubuntu-24.04
             platform: linux/amd64
+            digest_name: linux-amd64
           - runner: ubuntu-24.04-arm
             platform: linux/arm64
+            digest_name: linux-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -58,7 +60,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ replace(matrix.platform, '/', '-') }}
+          name: digests-${{ matrix.digest_name }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
