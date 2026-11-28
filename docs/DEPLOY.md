@@ -74,4 +74,4 @@ Over a limit the API answers `429` with `Retry-After` and `X-RateLimit-Limit` / 
 
 ## What has and has not been verified
 
-Verified by the test suite and live runs: key auth (401 without a key, 200 with), per-key limits and `429` headers, `/v1/usage`, the refusal to listen publicly without a key, and that the compose file, Dockerfile, `render.yaml`, `fly.toml` and `railway.json` are consistent with each other. Not run from this repository: an actual `docker build` or a platform deployment. Check the first deploy on your platform before relying on it.
+Verified by the test suite and live runs: key auth (401 without a key, 200 with), per-key limits and `429` headers, `/v1/usage`, the refusal to listen publicly without a key, and that the compose file, Dockerfile, `render.yaml`, `fly.toml` and `railway.json` are consistent with each other. An actual `docker compose` build and run has been verified on Oracle Cloud Always Free Ampere (arm64, Ubuntu 24.04), including Playwright after installing `libatomic1`. Not run from this repository: a Docker build in CI, or a Render, Fly or Railway deployment. Check the first deploy on your platform before relying on it.

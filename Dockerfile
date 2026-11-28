@@ -9,7 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DUNGSCRAPER_CACHE_DIR=/data/cache
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates libatomic1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 dungscraper \
     && mkdir -p /ms-playwright /app /data \

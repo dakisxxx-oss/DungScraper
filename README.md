@@ -34,6 +34,44 @@ For Claude Desktop, `dungscraper install-claude` writes that entry for you. Then
 
 > **Your agent will say it is using DungScraper.** Every tool result starts with `🦴 DungScraper v0.6.0 · <tool> · <tier> · <ms>`, and the tool descriptions tell the agent to mention it. Set `DUNGSCRAPER_BANNER=0` to turn the line off.
 
+
+## Self-host in 5 minutes
+
+**Free on Oracle Cloud Always Free (Ampere arm64).** The same steps work on any amd64 or arm64 Docker host.
+
+1. Create an Always Free Ampere VM (`VM.Standard.A1.Flex`, Canonical Ubuntu 24.04). 4 OCPU and 24 GB still fit the free tier. Add your SSH public key when you create the instance.
+
+2. Install Docker Engine and the Compose plugin from Docker's official repo, then enable Docker on boot.
+
+3. Clone this repo and create a `.env` with an API key. The public API will not start on `0.0.0.0` without one. Local MCP, CLI and `pip install` still need no key.
+
+```bash
+git clone https://github.com/dakisxxx-oss/DungScraper.git
+cd DungScraper
+cp .env.example .env
+# Set DUNGSCRAPER_API_KEYS to a value from:
+#   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+# To accept traffic from other machines (put TLS in front when you can):
+#   DUNGSCRAPER_BIND=0.0.0.0
+chmod 600 .env
+```
+
+4. Build and run. Compose starts the API, a Redis-backed crawl queue and a worker, all with `restart: unless-stopped`.
+
+```bash
+docker compose up --build -d
+curl -s localhost:8741/health
+```
+
+5. Open TCP port **8741**:
+
+- On Ubuntu images from Oracle, the default firewall has iptables `REJECT` rules in `/etc/iptables/rules.v4`. Add an `ACCEPT` for TCP 8741 **before** the `REJECT` line and keep that file in sync with the live rules.
+- In the Oracle Cloud console, add an ingress rule on your VCN's default security list: source `0.0.0.0/0`, protocol TCP, destination port 8741.
+
+Call the API with `Authorization: Bearer <key>` or `X-API-Key: <key>`. Compose binds to `127.0.0.1` unless you set `DUNGSCRAPER_BIND=0.0.0.0`. If you put Caddy or nginx in front, keep the bind on localhost and open 80/443 instead.
+
+The Dockerfile installs `libatomic1` so Playwright starts on arm64 (Oracle Ampere, Raspberry Pi, Apple Silicon). Full reference: [DEPLOY.md](https://github.com/dakisxxx-oss/DungScraper/blob/main/docs/DEPLOY.md).
+
 ## What you get
 
 | | |
@@ -77,7 +115,7 @@ Based on each project's public docs, November 2026. Pricing changes, so check th
 Where it loses, plainly:
 - **Proxies are yours.** DungScraper rotates and health-checks proxies you supply. It sells and bundles none, and has no residential pool. Heavy bot protection (Cloudflare Turnstile, DataDome) can still block it.
 - **Research is retrieval, not reasoning.** It ranks and cites passages. It does not click, log in or plan like Firecrawl's agent. A written answer needs your own model key.
-- **"Hosted" means self-hosted.** The Docker image, compose file and one-click templates are ready, but there is no service run by us. The Docker build and platform deploys were not run from this repo's CI, so check your first deploy.
+- **"Hosted" means self-hosted.** The Docker image, compose file and one-click templates are ready, but there is no service run by us. The image has been built and run on Oracle Cloud Always Free Ampere (arm64). Platform one-click deploys and a Docker build in CI have not been run from this repo, so check your first deploy on Render, Fly or Railway.
 - **Scale is one machine** (or a few replicas whose rate-limit counters are separate). Crawl4AI's deep-crawl scorers and filters are more numerous than ours.
 - It is a young project with fewer users and less mileage than the others.
 
